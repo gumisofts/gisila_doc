@@ -1,0 +1,20 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+  errors:
+    # The builder code intentionally targets the legacy `analyzer`
+    # element model so it works with `source_gen` 2.x. Suppress the
+    # noisy deprecation hints on those symbols package-wide.
+    deprecated_member_use: ignore
+    unnecessary_library_name: ignore
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+
+linter:
+  rules:
+    - prefer_relative_imports
+    - directives_ordering

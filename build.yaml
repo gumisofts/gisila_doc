@@ -1,0 +1,10 @@
+builders:
+  gisila_doc:
+    import: "package:gisila_doc/builder.dart"
+    builder_factories: ["controllerBuilder"]
+    build_extensions:
+      ".dart":
+        - ".gisila_doc.g.part"
+    auto_apply: dependents
+    build_to: cache
+    applies_builders: ["source_gen|combining_builder"]
