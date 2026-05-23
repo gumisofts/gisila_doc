@@ -40,8 +40,7 @@ class OpenApiSpec {
 
   /// Adds/overrides an operation at [path] / [method].
   void putOperation(String path, String method, Operation op) {
-    final byMethod =
-        paths.putIfAbsent(path, () => <String, Operation>{});
+    final byMethod = paths.putIfAbsent(path, () => <String, Operation>{});
     byMethod[method.toLowerCase()] = op;
   }
 
@@ -93,9 +92,8 @@ class OpenApiSpec {
   }
 
   String toJson({bool pretty = true}) {
-    final encoder = pretty
-        ? const JsonEncoder.withIndent('  ')
-        : const JsonEncoder();
+    final encoder =
+        pretty ? const JsonEncoder.withIndent('  ') : const JsonEncoder();
     return encoder.convert(toMap());
   }
 }

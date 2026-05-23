@@ -22,9 +22,8 @@ Future<void> main() async {
   // /openapi.json + /docs (Swagger UI) + /redoc
   router.mount('/', docsHandler(spec));
 
-  final handler = const Pipeline()
-      .addMiddleware(logRequests())
-      .addHandler(router.call);
+  final handler =
+      const Pipeline().addMiddleware(logRequests()).addHandler(router.call);
 
   final server = await io.serve(handler, '0.0.0.0', 8080);
   print('Listening on http://${server.address.host}:${server.port}');

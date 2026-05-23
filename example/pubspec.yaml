@@ -1,7 +1,6 @@
 name: gisila_doc_example
 description: Minimal demo of gisila_doc.
 version: 0.0.1
-publish_to: none
 
 environment:
   sdk: ^3.3.0

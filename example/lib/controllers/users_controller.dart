@@ -21,7 +21,8 @@ class UsersController {
   Future<List<User>> listUsers({int? limit, int? offset}) async {
     final all = _store.values.toList();
     final start = offset ?? 0;
-    final end = limit == null ? all.length : (start + limit).clamp(0, all.length);
+    final end =
+        limit == null ? all.length : (start + limit).clamp(0, all.length);
     return all.sublist(start.clamp(0, all.length), end);
   }
 
@@ -34,7 +35,7 @@ class UsersController {
       return Response.notFound('{"error":"user not found"}',
           headers: const {'content-type': 'application/json'});
     }
-    return jsonResponse(user);
+    return jsonResponse(body: user);
   }
 
   /// Creates a new user.

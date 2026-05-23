@@ -299,8 +299,7 @@ ${extractStatements.join('\n          ')}
     if (requestBodyEntry == null && route.bodyDoc != null) {
       final bd = route.bodyDoc!;
       final schema = emitter.emitInline(bd.type);
-      requestBodyEntry =
-          'RequestBody(required: ${bd.required}, '
+      requestBodyEntry = 'RequestBody(required: ${bd.required}, '
           'content: {'
           "'${bd.contentType}': MediaType(schema: $schema)"
           '}'
@@ -473,16 +472,14 @@ ${extractStatements.join('\n          ')}
           type: typeReader.typeValue,
           required: r.peek('required')?.boolValue ?? true,
           description: r.peek('description')?.stringValue,
-          contentType:
-              r.peek('contentType')?.stringValue ?? 'application/json',
+          contentType: r.peek('contentType')?.stringValue ?? 'application/json',
         );
       } else if (element.name == 'QueryDoc') {
         final name = r.read('name').stringValue;
         final typeReader = r.peek('type');
-        final dartType =
-            (typeReader != null && !typeReader.isNull)
-                ? typeReader.typeValue
-                : null;
+        final dartType = (typeReader != null && !typeReader.isNull)
+            ? typeReader.typeValue
+            : null;
         extraQueryDocs.add(_QueryDocMeta(
           name: name,
           type: dartType,
@@ -512,8 +509,7 @@ ${extractStatements.join('\n          ')}
   bool _isRouteSubtype(ClassElement element) {
     ClassElement? c = element;
     while (c != null) {
-      if (c.name == 'Route' &&
-          c.library.identifier.contains('gisila_doc')) {
+      if (c.name == 'Route' && c.library.identifier.contains('gisila_doc')) {
         return true;
       }
       final superType = c.supertype;
@@ -641,9 +637,8 @@ ${extractStatements.join('\n          ')}
   // -------------------------------------------------------------------------
 
   String _joinPath(String prefix, String suffix) {
-    final p = prefix.endsWith('/')
-        ? prefix.substring(0, prefix.length - 1)
-        : prefix;
+    final p =
+        prefix.endsWith('/') ? prefix.substring(0, prefix.length - 1) : prefix;
     final s = suffix.startsWith('/') ? suffix : '/$suffix';
     final out = '$p$s';
     return out.isEmpty ? '/' : out;

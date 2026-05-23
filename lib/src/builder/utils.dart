@@ -19,8 +19,7 @@ String typeDisplayNameNullable(DartType type) => type.getDisplayString();
 
 /// True iff [type] is `T?` (or `Null`).
 bool isNullable(DartType type) =>
-    type.nullabilitySuffix == NullabilitySuffix.question ||
-    type.isDartCoreNull;
+    type.nullabilitySuffix == NullabilitySuffix.question || type.isDartCoreNull;
 
 /// True iff [type] is one of the standard "primitive" shelf-friendly
 /// types we can coerce from a path/query string.
@@ -69,8 +68,7 @@ bool isVoid(DartType type) {
 }
 
 /// Returns `true` if [type] is a `List<X>` (any X).
-bool isList(DartType type) =>
-    type is InterfaceType && type.isDartCoreList;
+bool isList(DartType type) => type is InterfaceType && type.isDartCoreList;
 
 /// Returns `true` if [type] is a `Map<String, X>`.
 bool isStringMap(DartType type) {

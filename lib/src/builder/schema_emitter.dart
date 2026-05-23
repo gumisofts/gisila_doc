@@ -53,18 +53,14 @@ class SchemaEmitter {
         return _primitive('string', nullable: nullable, format: 'uri');
       case 'dynamic':
       case 'Object':
-        return nullable
-            ? '<String, Object?>{}'
-            : '<String, Object?>{}';
+        return nullable ? '<String, Object?>{}' : '<String, Object?>{}';
     }
 
     // List<T> --------------------------------------------------------
     final listInner = listElementType(type);
     if (listInner != null) {
       final inner = _emit(listInner);
-      final typeExpr = nullable
-          ? "<Object?>['array', 'null']"
-          : "'array'";
+      final typeExpr = nullable ? "<Object?>['array', 'null']" : "'array'";
       return "<String, Object?>{'type': $typeExpr, 'items': $inner}";
     }
 
@@ -72,9 +68,7 @@ class SchemaEmitter {
     final mapVal = mapValueType(type);
     if (mapVal != null) {
       final inner = _emit(mapVal);
-      final typeExpr = nullable
-          ? "<Object?>['object', 'null']"
-          : "'object'";
+      final typeExpr = nullable ? "<Object?>['object', 'null']" : "'object'";
       return "<String, Object?>{'type': $typeExpr, "
           "'additionalProperties': $inner}";
     }
@@ -104,9 +98,7 @@ class SchemaEmitter {
   }
 
   String _primitive(String type, {bool nullable = false, String? format}) {
-    final typeExpr = nullable
-        ? "<Object?>['$type', 'null']"
-        : "'$type'";
+    final typeExpr = nullable ? "<Object?>['$type', 'null']" : "'$type'";
     final fmt = format == null ? '' : ", 'format': '$format'";
     return "<String, Object?>{'type': $typeExpr$fmt}";
   }
@@ -126,7 +118,8 @@ class SchemaEmitter {
       // / derived fields that the user doesn't want in their schema.
       for (final p in ctor.parameters) {
         final fieldName = p.name;
-        final required = p.isRequiredNamed || p.isRequiredPositional ||
+        final required = p.isRequiredNamed ||
+            p.isRequiredPositional ||
             (!p.isOptional && !isNullable(p.type));
         fields.add(_FieldShape(
           name: fieldName,
