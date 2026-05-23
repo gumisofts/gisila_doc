@@ -483,6 +483,11 @@
       ]
     },
     {
+      "name": "mime",
+      "version": "1.0.6",
+      "dependencies": []
+    },
+    {
       "name": "js",
       "version": "0.7.2",
       "dependencies": []
@@ -776,11 +781,6 @@
     {
       "name": "fixnum",
       "version": "1.1.1",
-      "dependencies": []
-    },
-    {
-      "name": "mime",
-      "version": "1.0.6",
       "dependencies": []
     }
   ],

@@ -3,18 +3,16 @@ description: >-
   Generate OpenAPI 3.1 specs and shelf_router wiring from annotated Dart
   controllers. Minimal boilerplate, maximum type inference, bundled Swagger UI.
 version: 0.1.0
-publish_to: none
-
 environment:
   sdk: ^3.3.0
+repository: https://github.com/gumisofts/gisila_doc
 
 dependencies:
   meta: ^1.11.0
   shelf: ^1.4.1
   shelf_router: ^1.1.4
   collection: ^1.18.0
-  gisila:
-    path: /home/murad/gisila_tools/gisila
+  gisila: ^0.1.0
 
   # Build-time dependencies are declared here (not dev_dependencies) because
   # the builder library is exported from this package and consumers run it
