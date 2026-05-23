@@ -180,16 +180,18 @@ packages:
   gisila:
     dependency: transitive
     description:
-      path: "/home/murad/gisila_tools/gisila"
-      relative: false
-    source: path
+      name: gisila
+      sha256: "50cb08e5c8d21dc7cd45b598e58f013d487004ead23d1256df8f418e29b202c8"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.1.0"
   gisila_doc:
     dependency: "direct main"
     description:
-      path: ".."
-      relative: true
-    source: path
+      name: gisila_doc
+      sha256: "5254b297cbf5e4648ddc84d4aa018d8dd4134f397bc192c14da0cf7105498f53"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.1.0"
   glob:
     dependency: transitive
