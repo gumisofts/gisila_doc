@@ -213,10 +213,10 @@ packages:
     dependency: "direct main"
     description:
       name: gisila
-      sha256: "50cb08e5c8d21dc7cd45b598e58f013d487004ead23d1256df8f418e29b202c8"
+      sha256: "461d0f48a67b9755aa148b836bb5879e18e164051726a3591baa3a12f0300c28"
       url: "https://pub.dev"
     source: hosted
-    version: "0.1.0"
+    version: "0.1.1"
   glob:
     dependency: transitive
     description:
