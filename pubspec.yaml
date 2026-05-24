@@ -2,7 +2,7 @@ name: gisila_doc
 description: >-
   Generate OpenAPI 3.1 specs and shelf_router wiring from annotated Dart
   controllers. Minimal boilerplate, maximum type inference, bundled Swagger UI.
-version: 0.1.0+1
+version: 0.1.0+2
 environment:
   sdk: ^3.3.0
 repository: https://github.com/gumisofts/gisila_doc

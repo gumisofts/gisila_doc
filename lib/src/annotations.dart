@@ -35,6 +35,22 @@ class Controller {
 ///
 /// The generator never instantiates [Route] directly; concrete subclasses
 /// such as [Get] and [Post] carry the HTTP verb.
+///
+/// The optional [body] and [responses] parameters let you document the
+/// request body schema and all response variants inline, without needing
+/// separate [BodyDoc] / [Returns] / [Responses] annotations:
+///
+/// ```dart
+/// @Post('/register',
+///   summary: 'Register a new account',
+///   body: BodyDoc(UserRegisterRequest, description: 'Registration payload'),
+///   responses: [
+///     Returns(statusCode: 201, bodyType: UserRegisterRequest),
+///     Returns(statusCode: 400, bodyType: ErrorResponse),
+///   ],
+/// )
+/// Future<Response> register(Request request) async { ... }
+/// ```
 @Target({TargetKind.method})
 class Route {
   const Route(
@@ -46,6 +62,8 @@ class Route {
     this.deprecated = false,
     this.tags = const <String>[],
     this.statusCode = 200,
+    this.body,
+    this.responses,
   });
 
   final String method;
@@ -60,6 +78,16 @@ class Route {
   /// returns a value (rather than a [Response] directly). For `POST` the
   /// generator defaults this to `201` unless overridden.
   final int statusCode;
+
+  /// Inline request-body documentation. Superseded by a standalone
+  /// [BodyDoc] annotation on the same method if both are present.
+  final BodyDoc? body;
+
+  /// Inline response entries. The first element overrides the primary
+  /// success response; the rest become additional response entries.
+  /// Superseded by standalone [Returns] / [Responses] annotations if
+  /// those are also present on the same method.
+  final List<Returns>? responses;
 }
 
 class Get extends Route {
@@ -71,13 +99,17 @@ class Get extends Route {
     bool deprecated = false,
     List<String> tags = const <String>[],
     int statusCode = 200,
+    BodyDoc? body,
+    List<Returns>? responses,
   }) : super('GET', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
             tags: tags,
-            statusCode: statusCode);
+            statusCode: statusCode,
+            body: body,
+            responses: responses);
 }
 
 class Post extends Route {
@@ -89,13 +121,17 @@ class Post extends Route {
     bool deprecated = false,
     List<String> tags = const <String>[],
     int statusCode = 201,
+    BodyDoc? body,
+    List<Returns>? responses,
   }) : super('POST', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
             tags: tags,
-            statusCode: statusCode);
+            statusCode: statusCode,
+            body: body,
+            responses: responses);
 }
 
 class Put extends Route {
@@ -107,13 +143,17 @@ class Put extends Route {
     bool deprecated = false,
     List<String> tags = const <String>[],
     int statusCode = 200,
+    BodyDoc? body,
+    List<Returns>? responses,
   }) : super('PUT', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
             tags: tags,
-            statusCode: statusCode);
+            statusCode: statusCode,
+            body: body,
+            responses: responses);
 }
 
 class Patch extends Route {
@@ -125,13 +165,17 @@ class Patch extends Route {
     bool deprecated = false,
     List<String> tags = const <String>[],
     int statusCode = 200,
+    BodyDoc? body,
+    List<Returns>? responses,
   }) : super('PATCH', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
             tags: tags,
-            statusCode: statusCode);
+            statusCode: statusCode,
+            body: body,
+            responses: responses);
 }
 
 class Delete extends Route {
@@ -143,13 +187,17 @@ class Delete extends Route {
     bool deprecated = false,
     List<String> tags = const <String>[],
     int statusCode = 204,
+    BodyDoc? body,
+    List<Returns>? responses,
   }) : super('DELETE', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
             tags: tags,
-            statusCode: statusCode);
+            statusCode: statusCode,
+            body: body,
+            responses: responses);
 }
 
 class Head extends Route {
@@ -160,12 +208,14 @@ class Head extends Route {
     String? operationId,
     bool deprecated = false,
     List<String> tags = const <String>[],
+    List<Returns>? responses,
   }) : super('HEAD', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
-            tags: tags);
+            tags: tags,
+            responses: responses);
 }
 
 class Options extends Route {
@@ -176,12 +226,14 @@ class Options extends Route {
     String? operationId,
     bool deprecated = false,
     List<String> tags = const <String>[],
+    List<Returns>? responses,
   }) : super('OPTIONS', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
-            tags: tags);
+            tags: tags,
+            responses: responses);
 }
 
 // ---------------------------------------------------------------------------
@@ -332,15 +384,25 @@ class QueryDoc {
   final String? description;
 }
 
-/// Documents the JSON request body schema for a route whose handler
-/// accepts a raw `Request` parameter (i.e. manual body parsing).
+/// Describes the JSON request body schema for a route.
 ///
-/// Use this when you parse the request body yourself (e.g. via `form()`)
-/// but want the OpenAPI document to show the expected shape:
+/// Preferred usage — pass it inline via the route annotation's `body:`
+/// parameter so everything stays in one place:
+///
+/// ```dart
+/// @Post('/login',
+///   body: BodyDoc(LoginRequest, description: 'Login credentials'),
+/// )
+/// Future<Response> login(Request request) async { ... }
+/// ```
+///
+/// It can also be used as a standalone method annotation when the inline
+/// style is inconvenient (e.g. a shared mixin), but that pattern is
+/// considered legacy:
 ///
 /// ```dart
 /// @Post('/login')
-/// @BodyDoc(LoginRequest)
+/// @BodyDoc(LoginRequest)   // legacy — prefer the inline body: param above
 /// Future<Response> login(Request request) async { ... }
 /// ```
 ///
@@ -360,6 +422,35 @@ class BodyDoc {
   final bool required;
   final String? description;
   final String contentType;
+}
+
+/// Declares multiple response entries for a route in a single annotation,
+/// as an alternative to the inline `responses:` parameter on the route
+/// annotation. Prefer the inline style:
+///
+/// ```dart
+/// @Post('/register',
+///   responses: [
+///     Returns(statusCode: 201, bodyType: UserRegisterRequest),
+///     Returns(statusCode: 400, bodyType: ErrorResponse),
+///   ],
+/// )
+/// ```
+///
+/// Use this standalone annotation only when you need to apply the same
+/// response set to multiple routes via a mixin or when the inline
+/// `responses:` list would be inconveniently long.
+///
+/// The first entry is treated as the primary success response (overriding
+/// the route's default status code / description / body type); every
+/// subsequent entry is added as an additional response entry.
+@Target({TargetKind.method})
+class Responses {
+  const Responses(this.responses);
+
+  /// Ordered list of response entries. The first element overrides the
+  /// primary success response; the rest become additional response entries.
+  final List<Returns> responses;
 }
 
 /// Adds extra OpenAPI tag(s) to a single operation.

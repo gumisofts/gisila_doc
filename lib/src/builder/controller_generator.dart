@@ -430,13 +430,18 @@ ${extractStatements.join('\n          ')}
         .toList();
     final statusCode = reader.peek('statusCode')?.intValue ?? 200;
 
-    // Honor @Returns, @ApiResponse extras, @RequestBody, and @QueryDoc.
+    // Honor @Returns / @Responses, @ApiResponse extras, @RequestBody, and @QueryDoc.
     int? overrideStatus;
     String? overrideDesc;
     DartType? returnsBodyType;
     _BodyDocMeta? bodyDoc;
     final extraQueryDocs = <_QueryDocMeta>[];
     final extras = <_ExtraResponse>[];
+
+    // Collects all @Returns entries (from stacked @Returns and from @Responses).
+    // First entry → primary success response override; rest → extra responses.
+    final returnsEntries = <_ReturnsEntry>[];
+
     for (final m in method.metadata) {
       final value = m.computeConstantValue();
       if (value == null) continue;
@@ -445,11 +450,10 @@ ${extractStatements.join('\n          ')}
       if (element is! ClassElement) continue;
       final r = ConstantReader(value);
       if (element.name == 'Returns') {
-        overrideStatus = r.peek('statusCode')?.intValue;
-        overrideDesc = r.peek('description')?.stringValue;
-        final btReader = r.peek('bodyType');
-        if (btReader != null && !btReader.isNull) {
-          returnsBodyType = btReader.typeValue;
+        returnsEntries.add(_ReturnsEntry._fromReader(r));
+      } else if (element.name == 'Responses') {
+        for (final item in r.read('responses').listValue) {
+          returnsEntries.add(_ReturnsEntry._fromReader(ConstantReader(item)));
         }
       } else if (element.name == 'ApiResponse') {
         final s = r.peek('statusCode')?.intValue;
@@ -486,6 +490,50 @@ ${extractStatements.join('\n          ')}
           required: r.peek('required')?.boolValue ?? false,
           description: r.peek('description')?.stringValue,
         ));
+      }
+    }
+
+    // Fall back to inline body:/responses: from the route annotation when no
+    // standalone method-level annotations provided those values.
+    if (bodyDoc == null) {
+      final inlineBody = reader.peek('body');
+      if (inlineBody != null && !inlineBody.isNull) {
+        bodyDoc = _BodyDocMeta(
+          type: inlineBody.read('type').typeValue,
+          required: inlineBody.peek('required')?.boolValue ?? true,
+          description: inlineBody.peek('description')?.stringValue,
+          contentType:
+              inlineBody.peek('contentType')?.stringValue ?? 'application/json',
+        );
+      }
+    }
+
+    if (returnsEntries.isEmpty) {
+      final inlineResponses = reader.peek('responses');
+      if (inlineResponses != null && !inlineResponses.isNull) {
+        for (final item in inlineResponses.listValue) {
+          returnsEntries.add(_ReturnsEntry._fromReader(ConstantReader(item)));
+        }
+      }
+    }
+
+    // Process collected @Returns / @Responses entries.
+    // First entry overrides the primary success response; the rest become
+    // additional response entries (like @ApiResponse).
+    if (returnsEntries.isNotEmpty) {
+      final primary = returnsEntries.first;
+      overrideStatus = primary.statusCode;
+      overrideDesc = primary.description;
+      returnsBodyType = primary.bodyType;
+      for (final entry in returnsEntries.skip(1)) {
+        final s = entry.statusCode;
+        if (s != null) {
+          extras.add(_ExtraResponse(
+            statusCode: s,
+            description: entry.description,
+            bodyType: entry.bodyType,
+          ));
+        }
       }
     }
 
@@ -810,4 +858,28 @@ class _ParamAnnotation {
   final _Source source;
   final String? name;
   final String? description;
+}
+
+/// Internal representation of a single entry from `@Returns` or `@Responses`.
+class _ReturnsEntry {
+  _ReturnsEntry({this.statusCode, this.description, this.bodyType});
+
+  factory _ReturnsEntry._fromReader(ConstantReader r) {
+    final statusCode = r.peek('statusCode')?.intValue;
+    final description = r.peek('description')?.stringValue;
+    DartType? bodyType;
+    final btReader = r.peek('bodyType');
+    if (btReader != null && !btReader.isNull) {
+      bodyType = btReader.typeValue;
+    }
+    return _ReturnsEntry(
+      statusCode: statusCode,
+      description: description,
+      bodyType: bodyType,
+    );
+  }
+
+  final int? statusCode;
+  final String? description;
+  final DartType? bodyType;
 }
