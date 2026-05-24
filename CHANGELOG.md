@@ -1,3 +1,11 @@
+# Changelog
+
+## 0.1.1
+
+- Unified version with the rest of the gisila ecosystem (`gisila`, `gisila_orm`, `gisila_studio`).
+- Updated `gisila` dependency constraint to `^0.1.1`.
+- Bug fixes and stability improvements since the initial release.
+
 ## 0.1.0
 
 - Initial release.
