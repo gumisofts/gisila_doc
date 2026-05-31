@@ -78,7 +78,12 @@ class SchemaEmitter {
       final element = type.element;
       if (element is ClassElement && !element.library.isInSdk) {
         final componentName = element.name;
-        _registerClassSchema(componentName, element);
+        // Form subclass: introspect FormField members.
+        if (isFormSubtype(type)) {
+          _registerFormSchema(componentName, element);
+        } else {
+          _registerClassSchema(componentName, element);
+        }
         // r'$ref' is a raw string literal that prints as the literal
         // `$ref` JSON key (no interpolation). We could also use
         // `'\$ref'` but the raw form is clearer in generated code.
@@ -101,6 +106,84 @@ class SchemaEmitter {
     final typeExpr = nullable ? "<Object?>['$type', 'null']" : "'$type'";
     final fmt = format == null ? '' : ", 'format': '$format'";
     return "<String, Object?>{'type': $typeExpr$fmt}";
+  }
+
+  /// Registers a JSON schema for a gisila `Form` subclass.
+  ///
+  /// Walks every instance field on [element] whose type is a
+  /// [FormField] subtype, picks the schema fragment for the field's
+  /// type parameter (`StringField` → `string`, `IntField` → `integer`,
+  /// `EmailField` → `string + format:email`, `FileField` → `string +
+  /// format:binary`, …), and builds an `object` schema with the
+  /// Dart field name as the property key.
+  ///
+  /// We can't currently read the `required:` flag from each field's
+  /// initializer (FormField is not `const`), so every property is
+  /// emitted as optional - the runtime [Form.bind] still enforces it.
+  void _registerFormSchema(String name, ClassElement element) {
+    if (componentSchemas.containsKey(name)) return;
+    componentSchemas[name] = "<String, Object?>{}";
+
+    final propertyEntries = <String>[];
+    for (final field in _allInstanceFields(element)) {
+      if (field.isStatic || field.isSynthetic) continue;
+      if (!isFormFieldSubtype(field.type)) continue;
+      final propertyName = field.name;
+      final schema = _formFieldSchemaFor(field.type);
+      propertyEntries.add("'$propertyName': $schema");
+    }
+    componentSchemas[name] = "<String, Object?>{"
+        "'type': 'object', "
+        "'properties': <String, Object?>{${propertyEntries.join(', ')}}"
+        '}';
+  }
+
+  /// Walks the class hierarchy and yields every instance field, with
+  /// most-derived first. Used by the Form schema emitter so subclass
+  /// fields don't shadow base-class ones in the spec.
+  Iterable<FieldElement> _allInstanceFields(ClassElement element) sync* {
+    ClassElement? cursor = element;
+    final seen = <String>{};
+    while (cursor != null && !cursor.library.isInSdk) {
+      for (final f in cursor.fields) {
+        if (seen.add(f.name)) yield f;
+      }
+      final superType = cursor.supertype;
+      if (superType == null) break;
+      final superElement = superType.element;
+      cursor = superElement is ClassElement ? superElement : null;
+    }
+  }
+
+  /// Picks the JSON schema fragment for a [FormField] instance based
+  /// on the concrete subclass.
+  String _formFieldSchemaFor(DartType type) {
+    final name = typeDisplayName(type);
+    switch (name) {
+      case 'StringField':
+        return "<String, Object?>{'type': 'string'}";
+      case 'EmailField':
+        return "<String, Object?>{'type': 'string', 'format': 'email'}";
+      case 'PasswordField':
+        return "<String, Object?>{'type': 'string', 'format': 'password'}";
+      case 'IntField':
+        return "<String, Object?>{'type': 'integer', 'format': 'int64'}";
+      case 'DoubleField':
+        return "<String, Object?>{'type': 'number', 'format': 'double'}";
+      case 'BoolField':
+        return "<String, Object?>{'type': 'boolean'}";
+      case 'DateTimeField':
+        return "<String, Object?>{'type': 'string', 'format': 'date-time'}";
+      case 'FileField':
+        return "<String, Object?>{'type': 'string', 'format': 'binary'}";
+      case 'JsonField':
+        return "<String, Object?>{'type': 'object'}";
+    }
+    // Generic FormField<T> - try to recover T.
+    if (type is InterfaceType && type.typeArguments.isNotEmpty) {
+      return _emit(type.typeArguments.first);
+    }
+    return "<String, Object?>{}";
   }
 
   void _registerClassSchema(String name, ClassElement element) {

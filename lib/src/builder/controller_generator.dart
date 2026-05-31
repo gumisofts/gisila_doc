@@ -1,24 +1,44 @@
-/// `source_gen` Generator that turns each `@Controller` class into:
+/// `source_gen` Generator that turns each `@Controller` class into an
+/// extension method
+/// `attachToApp(GisilaApp app, Router router, OpenApiSpec spec,
+/// {String prefix = ''})` which:
 ///
-/// * an extension method `attachOpenApi(OpenApiSpec spec, Router router,
-///   {String prefix = ''})` that registers the routes on a
-///   shelf_router and contributes the operations to the spec, and
-/// * inline JSON schemas for every Dart type referenced as a path /
-///   query parameter or as a request / response body.
+/// 1. Registers every annotated route on the [Router] through
+///    [gisilaRoute] - so the runtime path goes through the same MVC
+///    pipeline (per-route rate limit / timeout / content-type filter
+///    / AuthN+AuthZ / error mapping) as the gisila core generator.
+/// 2. Contributes the matching operation, schemas and tags to the
+///    shared [OpenApiSpec].
+///
+/// The generator deliberately reuses gisila's `RouteConfig` literal
+/// emitter (`package:gisila/builder_helpers.dart`) so the per-route
+/// config merging logic stays in lock-step with the core generator.
 library gisila_doc.builder.controller_generator;
 
 import 'package:analyzer/dart/constant/value.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:build/build.dart';
+import 'package:gisila/builder_helpers.dart' as gisila_builder;
 import 'package:source_gen/source_gen.dart';
 
 import '../annotations.dart';
 import 'schema_emitter.dart';
 import 'utils.dart';
 
-/// Maps Dart parameter classifications onto the OpenAPI `in` field.
-enum _Source { path, query, header, body, request, none }
+/// Maps Dart parameter classifications onto the OpenAPI `in` field /
+/// gisila handler-binding strategy.
+enum _Source {
+  path,
+  query,
+  header,
+  body,
+  request,
+  context,
+  form,
+  service,
+  none,
+}
 
 class ControllerGenerator extends GeneratorForAnnotation<Controller> {
   const ControllerGenerator();
@@ -45,6 +65,10 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
         .where((s) => s.isNotEmpty)
         .toList();
 
+    final classGuards = _readGuards(cls.metadata);
+    final classMiddleware = _readMiddlewareNames(cls.metadata);
+    final classRouteConfig = _readUseRouteConfig(cls.metadata);
+
     final emitter = SchemaEmitter();
     final routeBlocks = <String>[];
 
@@ -58,13 +82,14 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
         route: route,
         controllerPrefix: controllerPrefix,
         controllerTags: controllerTags,
+        classGuards: classGuards,
+        classMiddleware: classMiddleware,
+        classRouteConfig: classRouteConfig,
         emitter: emitter,
       ));
     }
 
     if (routeBlocks.isEmpty) {
-      // No annotated methods - emit nothing rather than a useless
-      // extension. The user probably forgot to annotate.
       log.warning(
         'gisila_doc: ${cls.name} is annotated with @Controller but '
         'has no methods carrying @Get/@Post/...; skipping.',
@@ -72,14 +97,13 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       return '';
     }
 
-    // Emit a `spec.putSchema` call for every component schema the
-    // emitter accumulated while traversing the parameter/return types.
+    // `spec.putSchema(...)` once per accumulated component schema.
     final schemaRegistrations = emitter.componentSchemas.entries
         .map((e) => "    spec.putSchema('${e.key}', ${e.value});")
         .join('\n');
 
     final tagRegistrations = controllerTags
-        .map((t) => "    spec.putTag(${dartString(t)});")
+        .map((t) => "    spec.putTag(${gisila_builder.dartString(t)});")
         .join('\n');
 
     final buffer = StringBuffer()
@@ -87,15 +111,19 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       ..writeln('// gisila_doc: generated for ${cls.name}')
       ..writeln('// **************************************************')
       ..writeln()
-      ..writeln('extension ${cls.name}OpenApi on ${cls.name} {')
+      ..writeln('extension ${cls.name}GisilaDoc on ${cls.name} {')
       ..writeln('  /// Registers every annotated route of this controller on')
-      ..writeln('  /// [router] and contributes the operations to [spec].')
+      ..writeln('  /// [router] (through `gisilaRoute(...)` so the route runs')
+      ..writeln('  /// through the same MVC pipeline as gisila core) and')
+      ..writeln('  /// contributes the matching operations / schemas / tags')
+      ..writeln('  /// to [spec].')
       ..writeln('  ///')
       ..writeln('  /// Pass [prefix] to mount the controller under an extra')
       ..writeln('  /// path segment (e.g. an `/api/v1` versioning prefix).')
-      ..writeln('  void attachOpenApi(')
-      ..writeln('    OpenApiSpec spec,')
-      ..writeln('    Router router, {')
+      ..writeln('  void attachToApp(')
+      ..writeln('    GisilaApp app,')
+      ..writeln('    Router router,')
+      ..writeln('    OpenApiSpec spec, {')
       ..writeln('    String prefix = \'\',')
       ..writeln('  }) {')
       ..writeln(schemaRegistrations)
@@ -108,7 +136,7 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
   }
 
   // -------------------------------------------------------------------------
-  // Per-method codegen
+  // Per-route codegen
   // -------------------------------------------------------------------------
 
   String _emitRoute({
@@ -117,16 +145,29 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
     required _RouteMeta route,
     required String controllerPrefix,
     required List<String> controllerTags,
+    required _Guards classGuards,
+    required List<String> classMiddleware,
+    required DartObject? classRouteConfig,
     required SchemaEmitter emitter,
   }) {
     final fullPath = _joinPath(controllerPrefix, route.path);
     final shelfPath = toShelfPath(fullPath);
     final placeholders = pathPlaceholders(fullPath).toSet();
 
+    final methodGuards = _readGuards(method.metadata);
+    final methodMiddleware = _readMiddlewareNames(method.metadata);
+
+    final effectiveGuards = methodGuards.isPublic
+        ? const _Guards.public()
+        : _mergeGuards(classGuards, methodGuards);
+
     final paramInfos = _classifyParameters(
       method: method,
       placeholders: placeholders,
     );
+
+    final wantsContext = paramInfos.any((p) => p.source == _Source.context);
+    final wantsRequest = paramInfos.any((p) => p.source == _Source.request);
 
     final argExprs = <String>[];
     final namedArgExprs = <String>[];
@@ -137,32 +178,51 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
     for (final pi in paramInfos) {
       switch (pi.source) {
         case _Source.request:
-          // Pass the shelf request straight through.
-          if (pi.parameter.isNamed) {
-            namedArgExprs.add('${pi.parameter.name}: request');
-          } else {
-            argExprs.add('request');
-          }
+          _appendArgWith(argExprs, namedArgExprs, pi, 'request');
+          break;
+
+        case _Source.context:
+          _appendArgWith(argExprs, namedArgExprs, pi, 'ctx');
+          break;
+
+        case _Source.form:
+          final typeName = typeDisplayName(pi.parameter.type);
+          extractStatements.add(
+            'final ${pi.parameter.name} = '
+            'await bindForm(request, $typeName.new);',
+          );
+          _appendArgWith(argExprs, namedArgExprs, pi, pi.parameter.name);
+          // Contribute the form's JSON Schema to the OpenAPI body.
+          final schema = emitter.emitInline(pi.parameter.type);
+          requestBodyEntry =
+              'RequestBody(required: ${!pi.parameter.isOptional && !isNullable(pi.parameter.type)}, '
+              'content: {'
+              "'application/json': MediaType(schema: $schema)"
+              '})';
+          break;
+
+        case _Source.service:
+          final typeName = typeDisplayName(pi.parameter.type);
+          extractStatements.add(
+            'final ${pi.parameter.name} = ctx.service<$typeName>();',
+          );
+          _appendArgWith(argExprs, namedArgExprs, pi, pi.parameter.name);
           break;
 
         case _Source.path:
           final typeName = typeDisplayNameNullable(pi.parameter.type);
           extractStatements.add(
             'final ${pi.parameter.name} = coerce<$typeName>('
-            "request.params[${dartString(pi.openApiName)}], "
-            '${dartString(pi.openApiName)}, required: true);',
+            "request.params[${_dartStr(pi.openApiName)}], "
+            '${_dartStr(pi.openApiName)}, required: true);',
           );
-          if (pi.parameter.isNamed) {
-            namedArgExprs.add('${pi.parameter.name}: ${pi.parameter.name}');
-          } else {
-            argExprs.add(pi.parameter.name);
-          }
+          _appendArgWith(argExprs, namedArgExprs, pi, pi.parameter.name);
           parameterEntries.add(
             "Parameter("
-            "name: ${dartString(pi.openApiName)}, "
+            "name: ${_dartStr(pi.openApiName)}, "
             "location: 'path', "
             'required: true, '
-            'description: ${pi.description == null ? 'null' : dartString(pi.description!)}, '
+            'description: ${pi.description == null ? 'null' : _dartStr(pi.description!)}, '
             'schema: ${emitter.emitInline(pi.parameter.type)}, '
             ')',
           );
@@ -174,20 +234,16 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
               !pi.parameter.isOptional && !isNullable(pi.parameter.type);
           extractStatements.add(
             'final ${pi.parameter.name} = coerce<$typeName>('
-            "request.url.queryParameters[${dartString(pi.openApiName)}], "
-            '${dartString(pi.openApiName)}, required: $required);',
+            "request.url.queryParameters[${_dartStr(pi.openApiName)}], "
+            '${_dartStr(pi.openApiName)}, required: $required);',
           );
-          if (pi.parameter.isNamed) {
-            namedArgExprs.add('${pi.parameter.name}: ${pi.parameter.name}');
-          } else {
-            argExprs.add(pi.parameter.name);
-          }
+          _appendArgWith(argExprs, namedArgExprs, pi, pi.parameter.name);
           parameterEntries.add(
             "Parameter("
-            "name: ${dartString(pi.openApiName)}, "
+            "name: ${_dartStr(pi.openApiName)}, "
             "location: 'query', "
             'required: $required, '
-            'description: ${pi.description == null ? 'null' : dartString(pi.description!)}, '
+            'description: ${pi.description == null ? 'null' : _dartStr(pi.description!)}, '
             'schema: ${emitter.emitInline(pi.parameter.type)}, '
             ')',
           );
@@ -195,19 +251,15 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
 
         case _Source.header:
           extractStatements.add(
-            "final ${pi.parameter.name} = request.headers[${dartString(pi.openApiName.toLowerCase())}];",
+            "final ${pi.parameter.name} = request.headers[${_dartStr(pi.openApiName.toLowerCase())}];",
           );
-          if (pi.parameter.isNamed) {
-            namedArgExprs.add('${pi.parameter.name}: ${pi.parameter.name}');
-          } else {
-            argExprs.add(pi.parameter.name);
-          }
+          _appendArgWith(argExprs, namedArgExprs, pi, pi.parameter.name);
           parameterEntries.add(
             "Parameter("
-            "name: ${dartString(pi.openApiName)}, "
+            "name: ${_dartStr(pi.openApiName)}, "
             "location: 'header', "
             'required: ${!pi.parameter.isOptional && !isNullable(pi.parameter.type)}, '
-            'description: ${pi.description == null ? 'null' : dartString(pi.description!)}, '
+            'description: ${pi.description == null ? 'null' : _dartStr(pi.description!)}, '
             'schema: ${emitter.emitInline(pi.parameter.type)}, '
             ')',
           );
@@ -223,11 +275,7 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
             'final ${pi.parameter.name} = '
             '${bodyDecoder(' __raw_${pi.parameter.name} ')};',
           );
-          if (pi.parameter.isNamed) {
-            namedArgExprs.add('${pi.parameter.name}: ${pi.parameter.name}');
-          } else {
-            argExprs.add(pi.parameter.name);
-          }
+          _appendArgWith(argExprs, namedArgExprs, pi, pi.parameter.name);
           requestBodyEntry =
               "RequestBody(required: ${!pi.parameter.isOptional && !isNullable(pi.parameter.type)}, "
               'content: {'
@@ -239,7 +287,8 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
           throw InvalidGenerationSourceError(
             'Could not classify parameter "${pi.parameter.name}" of '
             '${cls.name}.${method.name}. Annotate it with @Path, @Query, '
-            '@Header or @Body, or remove it.',
+            '@Header or @Body, declare it as a Form / Service subtype, '
+            'or remove it.',
             element: pi.parameter,
           );
       }
@@ -250,34 +299,40 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
     final returnsResponse = isShelfResponse(returnType);
     final returnsVoid = isVoid(method.returnType);
 
-    final callArgs = StringBuffer('this.${method.name}(');
-    callArgs.write(argExprs.join(', '));
+    final successStatus = route.successStatus;
+
+    final callArgs = StringBuffer('this.${method.name}(')
+      ..write(argExprs.join(', '));
     if (namedArgExprs.isNotEmpty) {
       if (argExprs.isNotEmpty) callArgs.write(', ');
       callArgs.write(namedArgExprs.join(', '));
     }
     callArgs.write(')');
 
-    String handlerBody;
+    String returnStmt;
     if (returnsResponse) {
-      handlerBody = '''
-${extractStatements.join('\n          ')}
-          final response = await $callArgs;
-          return response;
-      ''';
+      returnStmt = '''final response = await $callArgs;
+            return response;''';
     } else if (returnsVoid) {
-      handlerBody = '''
-${extractStatements.join('\n          ')}
-          await $callArgs;
-          return emptyResponse(statusCode: ${route.successStatus});
-      ''';
+      returnStmt = '''await $callArgs;
+            return emptyResponse(statusCode: $successStatus);''';
     } else {
-      handlerBody = '''
-${extractStatements.join('\n          ')}
-          final result = await $callArgs;
-          return jsonResponse(body: result, statusCode: ${route.successStatus});
-      ''';
+      returnStmt = '''final result = await $callArgs;
+            return jsonResponse(body: result, statusCode: $successStatus);''';
     }
+
+    final extractBlock = extractStatements.isEmpty
+        ? ''
+        : '${extractStatements.join('\n            ')}\n            ';
+
+    // Decide whether to emit a `final request = ctx.request;` alias.
+    final requestRe = RegExp(r'\brequest\b');
+    final needsRequest =
+        wantsRequest || extractStatements.any((s) => requestRe.hasMatch(s));
+    final requestAlias =
+        needsRequest ? 'final request = ctx.request;\n            ' : '';
+
+    if (wantsContext) {/* ctx is consumed by the user method */}
 
     // ---------- extra query params from @QueryDoc ----------
     for (final qd in route.extraQueryDocs) {
@@ -286,16 +341,16 @@ ${extractStatements.join('\n          ')}
           : "<String, Object?>{'type': 'string'}";
       parameterEntries.add(
         "Parameter("
-        "name: ${dartString(qd.name)}, "
+        "name: ${_dartStr(qd.name)}, "
         "location: 'query', "
         'required: ${qd.required}, '
-        'description: ${qd.description == null ? 'null' : dartString(qd.description!)}, '
+        'description: ${qd.description == null ? 'null' : _dartStr(qd.description!)}, '
         'schema: $schema, '
         ')',
       );
     }
 
-    // ---------- request body (from @RequestBody when no typed param) ----------
+    // ---------- request body (from @BodyDoc when no typed param) ----------
     if (requestBodyEntry == null && route.bodyDoc != null) {
       final bd = route.bodyDoc!;
       final schema = emitter.emitInline(bd.type);
@@ -303,13 +358,11 @@ ${extractStatements.join('\n          ')}
           'content: {'
           "'${bd.contentType}': MediaType(schema: $schema)"
           '}'
-          '${bd.description != null ? ", description: ${dartString(bd.description!)}" : ""}'
+          '${bd.description != null ? ", description: ${_dartStr(bd.description!)}" : ""}'
           ')';
     }
 
     // ---------- responses spec ----------
-    // When the method returns Future<Response> but @Returns(bodyType:) or
-    // @ApiResponse(bodyType:) was supplied, use that type for the schema.
     String? responseSchema;
     if (!returnsVoid) {
       if (!returnsResponse) {
@@ -325,18 +378,18 @@ ${extractStatements.join('\n          ')}
 
     if (responseSchema == null) {
       responsesEntries.add(
-        "'${route.successStatus}': ResponseSpec(description: ${dartString(defaultDesc)})",
+        "'${route.successStatus}': ResponseSpec(description: ${_dartStr(defaultDesc)})",
       );
     } else {
       responsesEntries.add(
-        "'${route.successStatus}': ResponseSpec(description: ${dartString(defaultDesc)}, "
+        "'${route.successStatus}': ResponseSpec(description: ${_dartStr(defaultDesc)}, "
         'content: {'
         "'application/json': MediaType(schema: $responseSchema)"
         '})',
       );
     }
     for (final extra in route.extraResponses) {
-      final extraDesc = dartString(
+      final extraDesc = _dartStr(
           extra.description ?? _defaultStatusDescription(extra.statusCode));
       if (extra.bodyType != null) {
         final extraSchema = emitter.emitInline(extra.bodyType!);
@@ -356,18 +409,18 @@ ${extractStatements.join('\n          ')}
     final tags = <String>{...controllerTags, ...route.tags}.toList();
     final tagsLiteral = tags.isEmpty
         ? '<String>[]'
-        : '<String>[${tags.map(dartString).join(', ')}]';
+        : '<String>[${tags.map(_dartStr).join(', ')}]';
 
     final paramsLiteral = parameterEntries.isEmpty
         ? '<Parameter>[]'
         : '<Parameter>[${parameterEntries.join(', ')}]';
 
     final operationFields = <String>[
-      if (route.summary != null) 'summary: ${dartString(route.summary!)}',
+      if (route.summary != null) 'summary: ${_dartStr(route.summary!)}',
       if (route.description != null)
-        'description: ${dartString(route.description!)}',
+        'description: ${_dartStr(route.description!)}',
       if (route.operationId != null)
-        'operationId: ${dartString(route.operationId!)}',
+        'operationId: ${_dartStr(route.operationId!)}',
       if (route.deprecated) 'deprecated: true',
       'tags: $tagsLiteral',
       'parameters: $paramsLiteral',
@@ -375,25 +428,71 @@ ${extractStatements.join('\n          ')}
       'responses: <String, ResponseSpec>{${responsesEntries.join(', ')}}',
     ];
 
+    // ---------- route config literal ----------
+    final classConfigLiteral =
+        gisila_builder.emitRouteConfigLiteral(classRouteConfig);
+    final guardsConfigLiteral = gisila_builder.emitGuardsRouteConfigLiteral(
+      requireAuth: effectiveGuards.requireAuth,
+      permissions: effectiveGuards.permissions,
+      anyPermission: effectiveGuards.anyPermission,
+      roles: effectiveGuards.roles,
+      isPublic: effectiveGuards.isPublic,
+    );
+    final methodConfigLiteral =
+        gisila_builder.emitRouteConfigLiteral(route.config);
+
+    final mergedNamedMw = <String>{...classMiddleware, ...methodMiddleware};
+    final namedMwConfigLiteral =
+        gisila_builder.emitNamedMiddlewareConfig(mergedNamedMw);
+
+    final mergeChain = StringBuffer(classConfigLiteral);
+    if (guardsConfigLiteral != 'RouteConfig.empty') {
+      mergeChain.write('.merge($guardsConfigLiteral)');
+    }
+    if (methodConfigLiteral != 'RouteConfig.empty') {
+      mergeChain.write('.merge($methodConfigLiteral)');
+    }
+    if (namedMwConfigLiteral != null) {
+      mergeChain.write('.merge($namedMwConfigLiteral)');
+    }
+
+    final cfgExpr = mergeChain.toString();
+
     return '''
     {
       final basePath = '\$prefix$shelfPath';
       final openApiPath = '\$prefix$fullPath';
-      router.${route.method.toLowerCase()}(basePath, (Request request) async {
-        try {
-          $handlerBody
-        } on BadRequestException catch (e) {
-          return Response(400, body: '{"error":"\${e.message}"}', headers: const {'content-type': 'application/json'});
-        } on TypeError catch (e) {
-          return Response(400, body: '{"error":"Invalid request payload (\$e)"}', headers: const {'content-type': 'application/json'});
-        } on FormatException catch (e) {
-          return Response(400, body: '{"error":"Invalid request format: \${e.message}"}', headers: const {'content-type': 'application/json'});
-        }
-      });
+      final RouteConfig __cfg = $cfgExpr;
+      router.${route.method.toLowerCase()}(basePath, gisilaRoute(
+        app: app,
+        config: __cfg,
+        handler: (RequestContext ctx) async {
+          try {
+            $requestAlias$extractBlock$returnStmt
+          } on TypeError catch (e) {
+            throw BadRequestException('Invalid request payload (\$e)');
+          } on FormatException catch (e) {
+            throw BadRequestException('Invalid request format: \${e.message}');
+          }
+        },
+      ));
       spec.putOperation(openApiPath, '${route.method.toLowerCase()}', Operation(
         ${operationFields.join(',\n        ')},
       ));
     }''';
+  }
+
+  void _appendArgWith(
+    List<String> positional,
+    List<String> named,
+    _ParamInfo pi,
+    String value,
+  ) {
+    if (pi.parameter.isNamed) {
+      named.add('${pi.parameter.name}: $value');
+    } else {
+      positional.add(value);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -403,6 +502,7 @@ ${extractStatements.join('\n          ')}
   _RouteMeta? _readRoute(MethodElement method) {
     ConstantReader? reader;
     String? httpMethod;
+    DartObject? config;
     for (final m in method.metadata) {
       final value = m.computeConstantValue();
       if (value == null) continue;
@@ -411,10 +511,10 @@ ${extractStatements.join('\n          ')}
       final element = type.element;
       if (element is! ClassElement) continue;
       if (!_isRouteSubtype(element)) continue;
-      // ConstantReader.read walks inheritance, so the `method` field
-      // declared on the Route super class is found here.
       reader = ConstantReader(value);
       httpMethod = reader.peek('method')?.stringValue;
+      final cfg = reader.peek('config');
+      if (cfg != null && !cfg.isNull) config = cfg.objectValue;
       break;
     }
     if (reader == null || httpMethod == null) return null;
@@ -430,16 +530,12 @@ ${extractStatements.join('\n          ')}
         .toList();
     final statusCode = reader.peek('statusCode')?.intValue ?? 200;
 
-    // Honor @Returns / @Responses, @ApiResponse extras, @RequestBody, and @QueryDoc.
     int? overrideStatus;
     String? overrideDesc;
     DartType? returnsBodyType;
     _BodyDocMeta? bodyDoc;
     final extraQueryDocs = <_QueryDocMeta>[];
     final extras = <_ExtraResponse>[];
-
-    // Collects all @Returns entries (from stacked @Returns and from @Responses).
-    // First entry → primary success response override; rest → extra responses.
     final returnsEntries = <_ReturnsEntry>[];
 
     for (final m in method.metadata) {
@@ -493,8 +589,6 @@ ${extractStatements.join('\n          ')}
       }
     }
 
-    // Fall back to inline body:/responses: from the route annotation when no
-    // standalone method-level annotations provided those values.
     if (bodyDoc == null) {
       final inlineBody = reader.peek('body');
       if (inlineBody != null && !inlineBody.isNull) {
@@ -517,9 +611,6 @@ ${extractStatements.join('\n          ')}
       }
     }
 
-    // Process collected @Returns / @Responses entries.
-    // First entry overrides the primary success response; the rest become
-    // additional response entries (like @ApiResponse).
     if (returnsEntries.isNotEmpty) {
       final primary = returnsEntries.first;
       overrideStatus = primary.statusCode;
@@ -551,6 +642,7 @@ ${extractStatements.join('\n          ')}
       returnsBodyType: returnsBodyType,
       bodyDoc: bodyDoc,
       extraQueryDocs: extraQueryDocs,
+      config: config,
     );
   }
 
@@ -568,6 +660,108 @@ ${extractStatements.join('\n          ')}
     return false;
   }
 
+  /// Reads the (optional) class-level `@UseRouteConfig(config)`.
+  DartObject? _readUseRouteConfig(List<ElementAnnotation> metadata) {
+    for (final m in metadata) {
+      final value = m.computeConstantValue();
+      if (value == null) continue;
+      final type = value.type;
+      final element = type?.element;
+      if (element is! ClassElement) continue;
+      if (element.name != 'UseRouteConfig') continue;
+      if (!element.library.identifier.contains('gisila')) continue;
+      final cfg = value.getField('config');
+      if (cfg != null && !cfg.isNull) return cfg;
+    }
+    return null;
+  }
+
+  _Guards _readGuards(List<ElementAnnotation> metadata) {
+    var requireAuth = false;
+    final perms = <String>{};
+    final anyPerm = <String>{};
+    final roles = <String>{};
+    var isPublic = false;
+
+    for (final m in metadata) {
+      final value = m.computeConstantValue();
+      if (value == null) continue;
+      final type = value.type;
+      final element = type?.element;
+      if (element is! ClassElement) continue;
+      if (!element.library.identifier.contains('gisila')) continue;
+
+      switch (element.name) {
+        case 'RequireAuth':
+          requireAuth = true;
+          break;
+        case 'Public':
+          isPublic = true;
+          break;
+        case 'Permissions':
+          requireAuth = true;
+          perms.addAll(_readStringSet(value, 'values'));
+          break;
+        case 'AnyPermission':
+          requireAuth = true;
+          anyPerm.addAll(_readStringSet(value, 'values'));
+          break;
+        case 'Roles':
+          requireAuth = true;
+          roles.addAll(_readStringSet(value, 'values'));
+          break;
+      }
+    }
+
+    return _Guards(
+      requireAuth: requireAuth,
+      permissions: perms,
+      anyPermission: anyPerm,
+      roles: roles,
+      isPublic: isPublic,
+    );
+  }
+
+  Set<String> _readStringSet(DartObject value, String field) {
+    final v = value.getField(field);
+    if (v == null) return const <String>{};
+    final set = v.toSetValue();
+    if (set != null) {
+      return set.map((d) => d.toStringValue()).whereType<String>().toSet();
+    }
+    final list = v.toListValue();
+    if (list != null) {
+      return list.map((d) => d.toStringValue()).whereType<String>().toSet();
+    }
+    return const <String>{};
+  }
+
+  List<String> _readMiddlewareNames(List<ElementAnnotation> metadata) {
+    final names = <String>[];
+    for (final m in metadata) {
+      final value = m.computeConstantValue();
+      if (value == null) continue;
+      final type = value.type;
+      final element = type?.element;
+      if (element is! ClassElement) continue;
+      if (element.name != 'UseMiddleware') continue;
+      if (!element.library.identifier.contains('gisila')) continue;
+      final name = value.getField('name')?.toStringValue();
+      if (name != null && name.isNotEmpty) names.add(name);
+    }
+    return names;
+  }
+
+  _Guards _mergeGuards(_Guards a, _Guards b) {
+    return _Guards(
+      requireAuth: a.requireAuth || b.requireAuth,
+      permissions: {...a.permissions, ...b.permissions},
+      anyPermission: {...a.anyPermission, ...b.anyPermission},
+      roles: {...a.roles, ...b.roles},
+      isPublic: false,
+    );
+  }
+
   // -------------------------------------------------------------------------
   // Parameter classification
   // -------------------------------------------------------------------------
@@ -579,7 +773,6 @@ ${extractStatements.join('\n          ')}
     final infos = <_ParamInfo>[];
     bool bodySeen = false;
     for (final p in method.parameters) {
-      // Explicit annotations win.
       final annot = _findParamAnnotation(p);
       if (annot != null) {
         infos.add(_ParamInfo(
@@ -592,7 +785,6 @@ ${extractStatements.join('\n          ')}
         continue;
       }
 
-      // shelf Request always passes through.
       if (isShelfRequest(p.type)) {
         infos.add(_ParamInfo(
           parameter: p,
@@ -602,7 +794,34 @@ ${extractStatements.join('\n          ')}
         continue;
       }
 
-      // Implicit @Path when the name matches a placeholder.
+      if (isRequestContext(p.type)) {
+        infos.add(_ParamInfo(
+          parameter: p,
+          source: _Source.context,
+          openApiName: p.name,
+        ));
+        continue;
+      }
+
+      if (isFormSubtype(p.type)) {
+        infos.add(_ParamInfo(
+          parameter: p,
+          source: _Source.form,
+          openApiName: p.name,
+        ));
+        bodySeen = true;
+        continue;
+      }
+
+      if (isServiceSubtype(p.type)) {
+        infos.add(_ParamInfo(
+          parameter: p,
+          source: _Source.service,
+          openApiName: p.name,
+        ));
+        continue;
+      }
+
       if (placeholders.contains(p.name)) {
         infos.add(_ParamInfo(
           parameter: p,
@@ -612,7 +831,6 @@ ${extractStatements.join('\n          ')}
         continue;
       }
 
-      // Primitive ⇒ implicit query parameter.
       if (isCoercible(p.type)) {
         infos.add(_ParamInfo(
           parameter: p,
@@ -622,8 +840,6 @@ ${extractStatements.join('\n          ')}
         continue;
       }
 
-      // Anything else (custom class, List<X>, Map<String,V>) is the
-      // body. We allow at most one implicit body parameter.
       if (!bodySeen) {
         infos.add(_ParamInfo(
           parameter: p,
@@ -716,13 +932,11 @@ ${extractStatements.join('\n          ')}
         final n = element.name;
         return (raw) => '$n.fromJson($raw as Map<String, dynamic>)';
       }
-      // Built-in `Map<String, dynamic>` falls through too.
       if (type.isDartCoreMap) {
         return (raw) => '($raw as Map).cast<String, dynamic>()';
       }
     }
 
-    // Last resort: pass through raw decoded JSON.
     return (raw) => raw;
   }
 
@@ -760,6 +974,8 @@ ${extractStatements.join('\n          ')}
   }
 }
 
+String _dartStr(String value) => gisila_builder.dartString(value);
+
 class _RouteMeta {
   _RouteMeta({
     required this.method,
@@ -775,6 +991,7 @@ class _RouteMeta {
     this.returnsBodyType,
     this.bodyDoc,
     this.extraQueryDocs = const [],
+    this.config,
   });
 
   final String method;
@@ -787,16 +1004,10 @@ class _RouteMeta {
   final int successStatus;
   final String? successDescription;
   final List<_ExtraResponse> extraResponses;
-
-  /// Body type supplied via `@Returns(bodyType: T)` when the method
-  /// returns `Future<Response>` directly.
   final DartType? returnsBodyType;
-
-  /// Request body schema declared via `@RequestBody(T)` at method level.
   final _BodyDocMeta? bodyDoc;
-
-  /// Extra query parameters declared via `@QueryDoc` at method level.
   final List<_QueryDocMeta> extraQueryDocs;
+  final DartObject? config;
 }
 
 class _ExtraResponse {
@@ -807,8 +1018,6 @@ class _ExtraResponse {
   });
   final int statusCode;
   final String? description;
-
-  /// Body type supplied via `@ApiResponse(statusCode, bodyType: T)`.
   final DartType? bodyType;
 }
 
@@ -833,8 +1042,6 @@ class _QueryDocMeta {
     this.description,
   });
   final String name;
-
-  /// Null means the annotation did not supply a type; fall back to string.
   final DartType? type;
   final bool required;
   final String? description;
@@ -860,7 +1067,6 @@ class _ParamAnnotation {
   final String? description;
 }
 
-/// Internal representation of a single entry from `@Returns` or `@Responses`.
 class _ReturnsEntry {
   _ReturnsEntry({this.statusCode, this.description, this.bodyType});
 
@@ -882,4 +1088,27 @@ class _ReturnsEntry {
   final int? statusCode;
   final String? description;
   final DartType? bodyType;
+}
+
+class _Guards {
+  const _Guards({
+    required this.requireAuth,
+    required this.permissions,
+    required this.anyPermission,
+    required this.roles,
+    required this.isPublic,
+  });
+
+  const _Guards.public()
+      : requireAuth = false,
+        permissions = const <String>{},
+        anyPermission = const <String>{},
+        roles = const <String>{},
+        isPublic = true;
+
+  final bool requireAuth;
+  final Set<String> permissions;
+  final Set<String> anyPermission;
+  final Set<String> roles;
+  final bool isPublic;
 }

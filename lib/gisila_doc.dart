@@ -29,6 +29,27 @@
 /// to refresh after changing annotations.
 library gisila_doc;
 
+// Re-export the gisila runtime so a single
+// `import 'package:gisila_doc/gisila_doc.dart';` is enough.
+// Hide gisila's annotation set whose names overlap with the doc-aware
+// versions defined in `src/annotations.dart` (Controller, Route,
+// Get/Post/Put/Patch/Delete/Head/Options, Body, Query, Path, Header).
+export 'package:gisila/gisila.dart'
+    hide
+        Body,
+        Controller,
+        Delete,
+        Get,
+        Head,
+        Header,
+        Options,
+        Patch,
+        Path,
+        Post,
+        Put,
+        Query,
+        Route;
+
 export 'src/annotations.dart';
 export 'src/runtime/codec.dart'
     show BadRequestException, coerce, emptyResponse, jsonResponse, readJsonBody;

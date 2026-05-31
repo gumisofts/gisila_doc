@@ -10,15 +10,19 @@ part of 'users_controller.dart';
 // gisila_doc: generated for UsersController
 // **************************************************
 
-extension UsersControllerOpenApi on UsersController {
+extension UsersControllerGisilaDoc on UsersController {
   /// Registers every annotated route of this controller on
-  /// [router] and contributes the operations to [spec].
+  /// [router] (through `gisilaRoute(...)` so the route runs
+  /// through the same MVC pipeline as gisila core) and
+  /// contributes the matching operations / schemas / tags
+  /// to [spec].
   ///
   /// Pass [prefix] to mount the controller under an extra
   /// path segment (e.g. an `/api/v1` versioning prefix).
-  void attachOpenApi(
-    OpenApiSpec spec,
-    Router router, {
+  void attachToApp(
+    GisilaApp app,
+    Router router,
+    OpenApiSpec spec, {
     String prefix = '',
   }) {
     spec.putSchema('User', <String, Object?>{
@@ -38,46 +42,45 @@ extension UsersControllerOpenApi on UsersController {
       },
       'required': <String>['id', 'name', 'email']
     });
-    spec.putSchema('CreateUser', <String, Object?>{
+    spec.putSchema('CreateUserForm', <String, Object?>{
       'type': 'object',
       'properties': <String, Object?>{
         'name': <String, Object?>{'type': 'string'},
-        'email': <String, Object?>{'type': 'string'},
-        'age': <String, Object?>{
-          'type': <Object?>['integer', 'null'],
-          'format': 'int64'
-        }
-      },
-      'required': <String>['name', 'email']
+        'email': <String, Object?>{'type': 'string', 'format': 'email'},
+        'age': <String, Object?>{'type': 'integer', 'format': 'int64'}
+      }
     });
     spec.putTag('Users');
     {
       final basePath = '$prefix/users/';
       final openApiPath = '$prefix/users/';
-      router.get(basePath, (Request request) async {
-        try {
-          final limit = coerce<int?>(
-              request.url.queryParameters['limit'], 'limit',
-              required: false);
-          final offset = coerce<int?>(
-              request.url.queryParameters['offset'], 'offset',
-              required: false);
-          final result = await this.listUsers(limit: limit, offset: offset);
-          return jsonResponse(result, statusCode: 200);
-        } on BadRequestException catch (e) {
-          return Response(400,
-              body: '{"error":"${e.message}"}',
-              headers: const {'content-type': 'application/json'});
-        } on TypeError catch (e) {
-          return Response(400,
-              body: '{"error":"Invalid request payload ($e)"}',
-              headers: const {'content-type': 'application/json'});
-        } on FormatException catch (e) {
-          return Response(400,
-              body: '{"error":"Invalid request format: ${e.message}"}',
-              headers: const {'content-type': 'application/json'});
-        }
-      });
+      final RouteConfig __cfg = RouteConfig.empty;
+      router.get(
+          basePath,
+          gisilaRoute(
+            app: app,
+            config: __cfg,
+            handler: (RequestContext ctx) async {
+              try {
+                final request = ctx.request;
+                final users = ctx.service<UserService>();
+                final limit = coerce<int?>(
+                    request.url.queryParameters['limit'], 'limit',
+                    required: false);
+                final offset = coerce<int?>(
+                    request.url.queryParameters['offset'], 'offset',
+                    required: false);
+                final result =
+                    await this.listUsers(users, limit: limit, offset: offset);
+                return jsonResponse(body: result, statusCode: 200);
+              } on TypeError catch (e) {
+                throw BadRequestException('Invalid request payload ($e)');
+              } on FormatException catch (e) {
+                throw BadRequestException(
+                    'Invalid request format: ${e.message}');
+              }
+            },
+          ));
       spec.putOperation(
           openApiPath,
           'get',
@@ -122,25 +125,28 @@ extension UsersControllerOpenApi on UsersController {
     {
       final basePath = '$prefix/users/<id>';
       final openApiPath = '$prefix/users/{id}';
-      router.get(basePath, (Request request) async {
-        try {
-          final id = coerce<String>(request.params['id'], 'id', required: true);
-          final response = await this.getUser(id);
-          return response;
-        } on BadRequestException catch (e) {
-          return Response(400,
-              body: '{"error":"${e.message}"}',
-              headers: const {'content-type': 'application/json'});
-        } on TypeError catch (e) {
-          return Response(400,
-              body: '{"error":"Invalid request payload ($e)"}',
-              headers: const {'content-type': 'application/json'});
-        } on FormatException catch (e) {
-          return Response(400,
-              body: '{"error":"Invalid request format: ${e.message}"}',
-              headers: const {'content-type': 'application/json'});
-        }
-      });
+      final RouteConfig __cfg = RouteConfig.empty;
+      router.get(
+          basePath,
+          gisilaRoute(
+            app: app,
+            config: __cfg,
+            handler: (RequestContext ctx) async {
+              try {
+                final request = ctx.request;
+                final id =
+                    coerce<String>(request.params['id'], 'id', required: true);
+                final users = ctx.service<UserService>();
+                final result = await this.getUser(id, users);
+                return jsonResponse(body: result, statusCode: 200);
+              } on TypeError catch (e) {
+                throw BadRequestException('Invalid request payload ($e)');
+              } on FormatException catch (e) {
+                throw BadRequestException(
+                    'Invalid request format: ${e.message}');
+              }
+            },
+          ));
       spec.putOperation(
           openApiPath,
           'get',
@@ -158,7 +164,11 @@ extension UsersControllerOpenApi on UsersController {
               )
             ],
             responses: <String, ResponseSpec>{
-              '200': ResponseSpec(description: 'OK'),
+              '200': ResponseSpec(description: 'OK', content: {
+                'application/json': MediaType(schema: <String, Object?>{
+                  r'$ref': '#/components/schemas/User'
+                })
+              }),
               '404': ResponseSpec(description: 'User not found')
             },
           ));
@@ -166,26 +176,28 @@ extension UsersControllerOpenApi on UsersController {
     {
       final basePath = '$prefix/users/';
       final openApiPath = '$prefix/users/';
-      router.post(basePath, (Request request) async {
-        try {
-          final __raw_body = await readJsonBody(request, required: true);
-          final body = CreateUser.fromJson(__raw_body as Map<String, dynamic>);
-          final result = await this.createUser(body);
-          return jsonResponse(result, statusCode: 201);
-        } on BadRequestException catch (e) {
-          return Response(400,
-              body: '{"error":"${e.message}"}',
-              headers: const {'content-type': 'application/json'});
-        } on TypeError catch (e) {
-          return Response(400,
-              body: '{"error":"Invalid request payload ($e)"}',
-              headers: const {'content-type': 'application/json'});
-        } on FormatException catch (e) {
-          return Response(400,
-              body: '{"error":"Invalid request format: ${e.message}"}',
-              headers: const {'content-type': 'application/json'});
-        }
-      });
+      final RouteConfig __cfg = RouteConfig.empty.merge(const RouteConfig(
+          rateLimit: const RateLimitConfig(requestsPerMinute: 60)));
+      router.post(
+          basePath,
+          gisilaRoute(
+            app: app,
+            config: __cfg,
+            handler: (RequestContext ctx) async {
+              try {
+                final request = ctx.request;
+                final form = await bindForm(request, CreateUserForm.new);
+                final users = ctx.service<UserService>();
+                final result = await this.createUser(form, users);
+                return jsonResponse(body: result, statusCode: 201);
+              } on TypeError catch (e) {
+                throw BadRequestException('Invalid request payload ($e)');
+              } on FormatException catch (e) {
+                throw BadRequestException(
+                    'Invalid request format: ${e.message}');
+              }
+            },
+          ));
       spec.putOperation(
           openApiPath,
           'post',
@@ -195,7 +207,7 @@ extension UsersControllerOpenApi on UsersController {
             parameters: <Parameter>[],
             requestBody: RequestBody(required: true, content: {
               'application/json': MediaType(schema: <String, Object?>{
-                r'$ref': '#/components/schemas/CreateUser'
+                r'$ref': '#/components/schemas/CreateUserForm'
               })
             }),
             responses: <String, ResponseSpec>{
@@ -210,25 +222,28 @@ extension UsersControllerOpenApi on UsersController {
     {
       final basePath = '$prefix/users/<id>';
       final openApiPath = '$prefix/users/{id}';
-      router.delete(basePath, (Request request) async {
-        try {
-          final id = coerce<String>(request.params['id'], 'id', required: true);
-          await this.deleteUser(id);
-          return emptyResponse(statusCode: 204);
-        } on BadRequestException catch (e) {
-          return Response(400,
-              body: '{"error":"${e.message}"}',
-              headers: const {'content-type': 'application/json'});
-        } on TypeError catch (e) {
-          return Response(400,
-              body: '{"error":"Invalid request payload ($e)"}',
-              headers: const {'content-type': 'application/json'});
-        } on FormatException catch (e) {
-          return Response(400,
-              body: '{"error":"Invalid request format: ${e.message}"}',
-              headers: const {'content-type': 'application/json'});
-        }
-      });
+      final RouteConfig __cfg = RouteConfig.empty;
+      router.delete(
+          basePath,
+          gisilaRoute(
+            app: app,
+            config: __cfg,
+            handler: (RequestContext ctx) async {
+              try {
+                final request = ctx.request;
+                final id =
+                    coerce<String>(request.params['id'], 'id', required: true);
+                final users = ctx.service<UserService>();
+                await this.deleteUser(id, users);
+                return emptyResponse(statusCode: 204);
+              } on TypeError catch (e) {
+                throw BadRequestException('Invalid request payload ($e)');
+              } on FormatException catch (e) {
+                throw BadRequestException(
+                    'Invalid request format: ${e.message}');
+              }
+            },
+          ));
       spec.putOperation(
           openApiPath,
           'delete',

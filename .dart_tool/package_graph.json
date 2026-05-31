@@ -5,7 +5,7 @@
   "packages": [
     {
       "name": "gisila_doc",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "dependencies": [
         "analyzer",
         "build",
@@ -195,7 +195,7 @@
     },
     {
       "name": "gisila",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "dependencies": [
         "analyzer",
         "build",

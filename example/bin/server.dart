@@ -1,8 +1,6 @@
-import 'package:shelf/shelf.dart';
-import 'package:shelf/shelf_io.dart' as io;
 import 'package:gisila_doc/gisila_doc.dart';
-import 'package:shelf_router/shelf_router.dart';
 import 'package:gisila_doc_example/controllers/users_controller.dart';
+import 'package:gisila_doc_example/services/user_service.dart';
 
 Future<void> main() async {
   final spec = OpenApiSpec(
@@ -14,20 +12,32 @@ Future<void> main() async {
     servers: const [ApiServer(url: 'http://localhost:8080')],
   );
 
+  final app = GisilaApp(
+    config: AppConfig(
+      logLevel: LogLevel.info,
+      defaultRouteConfig: const RouteConfig(
+        rateLimit: RateLimitConfig(requestsPerMinute: 300),
+      ),
+    ),
+  );
+
+  app.registerService<UserService>(UserService.new);
+
   final router = Router();
 
-  // Generated extension - registers routes AND populates the spec.
-  UsersController().attachOpenApi(spec, router);
+  // Generated extension - registers routes via gisilaRoute(...) AND
+  // populates the OpenAPI spec.
+  UsersController().attachToApp(app, router, spec);
 
   // /openapi.json + /docs (Swagger UI) + /redoc
   router.mount('/', docsHandler(spec));
 
-  final handler =
-      const Pipeline().addMiddleware(logRequests()).addHandler(router.call);
+  app.registerController(attacher: (app, mainRouter, {String prefix = ''}) {
+    mainRouter.mount('/', router.call);
+  });
 
-  final server = await io.serve(handler, '0.0.0.0', 8080);
-  print('Listening on http://${server.address.host}:${server.port}');
-  print('  Swagger UI:    http://localhost:${server.port}/docs');
-  print('  ReDoc:         http://localhost:${server.port}/redoc');
-  print('  OpenAPI JSON:  http://localhost:${server.port}/openapi.json');
+  await app.start(host: '0.0.0.0', port: 8080);
+  print('  Swagger UI:    http://localhost:8080/docs');
+  print('  ReDoc:         http://localhost:8080/redoc');
+  print('  OpenAPI JSON:  http://localhost:8080/openapi.json');
 }
