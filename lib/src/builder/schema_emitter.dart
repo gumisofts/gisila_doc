@@ -77,12 +77,12 @@ class SchemaEmitter {
     if (type is InterfaceType) {
       final element = type.element;
       if (element is ClassElement && !element.library.isInSdk) {
-        final componentName = element.name;
+        final componentName = _componentName(type);
         // Form subclass: introspect FormField members.
         if (isFormSubtype(type)) {
           _registerFormSchema(componentName, element);
         } else {
-          _registerClassSchema(componentName, element);
+          _registerClassSchema(componentName, type);
         }
         // r'$ref' is a raw string literal that prints as the literal
         // `$ref` JSON key (no interpolation). We could also use
@@ -100,6 +100,21 @@ class SchemaEmitter {
 
     // Fallback: untyped object.
     return "<String, Object?>{}";
+  }
+
+  /// The `components.schemas` name for [type]. Generic instantiations get
+  /// their type arguments in the name (`Page<User>` → `Page_User`,
+  /// `Page<List<Post?>>` → `Page_List_PostNullable`), so each one is its own
+  /// schema instead of all sharing `Page`.
+  String _componentName(InterfaceType type) {
+    if (type.typeArguments.isEmpty) return type.element.name;
+    final display = type
+        .getDisplayString()
+        .replaceFirst(RegExp(r'\?$'), '')
+        .replaceAll('?', 'Nullable');
+    return display
+        .replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
   }
 
   String _primitive(String type, {bool nullable = false, String? format}) {
@@ -186,13 +201,16 @@ class SchemaEmitter {
     return "<String, Object?>{}";
   }
 
-  void _registerClassSchema(String name, ClassElement element) {
+  /// Reads fields through [type] rather than its class, so a generic
+  /// class's `T` fields carry the instantiation's type arguments.
+  void _registerClassSchema(String name, InterfaceType type) {
     if (componentSchemas.containsKey(name)) return;
     // Reserve the name early so circular references resolve to a $ref
     // rather than recursing forever.
     componentSchemas[name] = "<String, Object?>{}";
 
-    final ctor = defaultConstructor(element);
+    final element = type.element as ClassElement;
+    final ctor = defaultConstructorOf(type);
     final fields = <_FieldShape>[];
 
     if (ctor != null && ctor.parameters.isNotEmpty) {
@@ -214,10 +232,11 @@ class SchemaEmitter {
       // Fall back to walking instance fields.
       for (final f in element.fields) {
         if (f.isStatic || f.isSynthetic) continue;
+        final fieldType = type.getGetter(f.name)?.returnType ?? f.type;
         fields.add(_FieldShape(
           name: f.name,
-          type: f.type,
-          required: !isNullable(f.type),
+          type: fieldType,
+          required: !isNullable(fieldType),
         ));
       }
     }

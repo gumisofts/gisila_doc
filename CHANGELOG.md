@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- OpenAPI: guarded routes now carry auth information. Operations from
+  routes with `@RequireAuth`, `@Permissions`, `@AnyPermission` or `@Roles`
+  (method or controller, unless `@Public`) get `security` (each of the new
+  `OpenApiSpec.securitySchemes`, default a single `bearerAuth` HTTP bearer
+  scheme, emitted only when something is guarded), a `401` and, with
+  permissions or roles, a `403` using gisila's error body
+  (`errorEnvelopeSchema`), plus `x-gisila-guards`. Routes' own
+  `@ApiResponse` entries win. New `SecurityScheme`, and
+  `Operation.requiresAuth` / `permissions` / `anyPermission` / `roles`.
+  Re-run build_runner to pick this up.
+- OpenAPI: generic classes no longer collapse into one schema.
+  `Page<User>` and `Page<Post>` become `Page_User` and `Page_Post`, with
+  `T`-typed fields resolved to the type argument instead of `{}`.
+- Tests: generator tests (`test/generator_test.dart`) run the builder on a
+  sample controller; the `coerce` test now expects gisila's behaviour for
+  an empty string (kept as `''`).
+
 ## 0.2.0 - MVC alignment with gisila 0.2.0 (BREAKING)
 
 - **`config: RouteConfig?`** added to every HTTP-verb annotation

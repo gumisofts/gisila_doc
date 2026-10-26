@@ -406,6 +406,27 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       }
     }
 
+    // Guarded routes document the 401 (and, with permissions or roles, the
+    // 403) that the guards send, unless the route declares its own.
+    if (effectiveGuards.requireAuth) {
+      final declared = {
+        route.successStatus,
+        for (final extra in route.extraResponses) extra.statusCode,
+      };
+      final authz = effectiveGuards.permissions.isNotEmpty ||
+          effectiveGuards.anyPermission.isNotEmpty ||
+          effectiveGuards.roles.isNotEmpty;
+      for (final status in [401, if (authz) 403]) {
+        if (declared.contains(status)) continue;
+        responsesEntries.add(
+          "'$status': ResponseSpec(description: "
+          '${_dartStr(_defaultStatusDescription(status))}, content: {'
+          "'application/json': MediaType(schema: errorEnvelopeSchema)"
+          '})',
+        );
+      }
+    }
+
     final tags = <String>{...controllerTags, ...route.tags}.toList();
     final tagsLiteral = tags.isEmpty
         ? '<String>[]'
@@ -426,6 +447,13 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       'parameters: $paramsLiteral',
       if (requestBodyEntry != null) 'requestBody: $requestBodyEntry',
       'responses: <String, ResponseSpec>{${responsesEntries.join(', ')}}',
+      if (effectiveGuards.requireAuth) 'requiresAuth: true',
+      if (effectiveGuards.permissions.isNotEmpty)
+        'permissions: ${_stringList(effectiveGuards.permissions)}',
+      if (effectiveGuards.anyPermission.isNotEmpty)
+        'anyPermission: ${_stringList(effectiveGuards.anyPermission)}',
+      if (effectiveGuards.roles.isNotEmpty)
+        'roles: ${_stringList(effectiveGuards.roles)}',
     ];
 
     // ---------- route config literal ----------
@@ -481,6 +509,9 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       ));
     }''';
   }
+
+  String _stringList(Iterable<String> values) =>
+      '<String>[${(values.toList()..sort()).map(_dartStr).join(', ')}]';
 
   void _appendArgWith(
     List<String> positional,

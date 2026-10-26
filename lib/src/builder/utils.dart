@@ -163,6 +163,18 @@ ConstructorElement? defaultConstructor(ClassElement cls) {
   return null;
 }
 
+/// Like [defaultConstructor], but taken from the instantiated [type], so
+/// parameter types have the type arguments substituted (`T` → `User`).
+ConstructorElement? defaultConstructorOf(InterfaceType type) {
+  for (final c in type.constructors) {
+    if (c.name.isEmpty && !c.isFactory) return c;
+  }
+  for (final c in type.constructors) {
+    if (c.name.isEmpty) return c;
+  }
+  return null;
+}
+
 /// Returns the `fromJson(Map<String, dynamic>)` factory if [cls]
 /// exposes one. Used to decode request bodies.
 ConstructorElement? fromJsonConstructor(ClassElement cls) {

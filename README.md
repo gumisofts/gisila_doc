@@ -253,7 +253,41 @@ walked through its default constructor and emitted under
 | `List<T>` | `{type: array, items: <T>}` |
 | `Map<String, V>` | `{type: object, additionalProperties: <V>}` |
 | Custom class | `{$ref: '#/components/schemas/MyClass'}` |
+| Generic class `Page<User>` | `{$ref: '#/components/schemas/Page_User'}`, with `T` replaced by `User` |
 | `T?` | Union with `'null'` (OpenAPI 3.1 style) |
+
+Each instantiation of a generic class is its own component, named after
+its type arguments: `Page<User>` is `Page_User`, `Page<List<Post?>>` is
+`Page_List_PostNullable`.
+
+## Authentication in the spec
+
+Routes guarded with gisila's `@RequireAuth()`, `@Permissions`,
+`@AnyPermission` or `@Roles` (on the method or the controller, unless the
+method is `@Public()`) are documented as such:
+
+- `security` lists every scheme in `OpenApiSpec.securitySchemes` as an
+  alternative, with the route's roles and permissions as its values
+  (OpenAPI 3.1 allows role names for non-OAuth schemes).
+- a `401` response, and a `403` when permissions or roles apply, both with
+  gisila's error body (`errorEnvelopeSchema`). A response the route
+  declares itself with `@ApiResponse` takes precedence.
+- `x-gisila-guards` with the raw `permissions`, `anyPermission` and
+  `roles`, since "any of" has no standard OpenAPI form.
+
+`securitySchemes` defaults to one HTTP bearer scheme, `bearerAuth`, which
+is what gisila's authenticators read. It is emitted only when some route
+is guarded. Pass your own, or `{}` to leave security out:
+
+```dart
+final spec = OpenApiSpec(
+  info: ApiInfo(title: 'My API', version: '1.0.0'),
+  securitySchemes: {
+    'bearerAuth': SecurityScheme.bearer(),
+    'session': SecurityScheme.apiKey(name: 'sid', location: 'cookie'),
+  },
+);
+```
 
 ---
 
