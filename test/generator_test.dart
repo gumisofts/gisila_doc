@@ -24,6 +24,24 @@ class Post {
   final String title;
 }
 
+enum Color { red, green }
+
+enum Coded {
+  a;
+
+  String toJson() => 'A';
+}
+
+class Palette {
+  Palette({required this.main, this.accent, required this.tags,
+      required this.all, required this.coded});
+  final Color main;
+  final Color? accent;
+  final Set<String> tags;
+  final Iterable<int> all;
+  final Coded coded;
+}
+
 class Page<T> {
   Page({required this.items, required this.total, this.next});
   final List<T> items;
@@ -50,6 +68,10 @@ class SampleController {
   @Get('/open')
   @Public()
   User open() => throw UnimplementedError();
+
+  @Get('/palette')
+  @Public()
+  Palette palette() => throw UnimplementedError();
 
   @Get('/search')
   @Public()
@@ -159,6 +181,37 @@ void main() {
 
     test('a route without parameters has no try at all', () {
       expect(handler('/open'), isNot(contains('try{')));
+    });
+  });
+
+  group('DOC-03 enums and collections', () {
+    test('an enum is a string with its names', () {
+      final schema = _schema(code, 'Palette');
+      expect(
+          schema,
+          contains("'main':<String,Object?>{'type':'string',"
+              "'enum':<Object?>['red','green']}"));
+      expect(
+          schema,
+          contains(
+              "'accent':<String,Object?>{'type':<Object?>['string','null'],"
+              "'enum':<Object?>['red','green',null]}"));
+    });
+
+    test('an enum with its own toJson() stays open', () {
+      expect(_schema(code, 'Palette'), contains("'coded':<String,Object?>{}"));
+    });
+
+    test('Set and Iterable are arrays; a Set has unique items', () {
+      final schema = _schema(code, 'Palette');
+      expect(
+          schema,
+          contains("'tags':<String,Object?>{'type':'array',"
+              "'items':<String,Object?>{'type':'string'},'uniqueItems':true}"));
+      expect(
+          schema,
+          contains("'all':<String,Object?>{'type':'array',"
+              "'items':<String,Object?>{'type':'integer','format':'int64'}}"));
     });
   });
 

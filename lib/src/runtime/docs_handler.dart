@@ -2,6 +2,8 @@
 /// CDN-hosted Swagger UI / ReDoc page.
 library gisila_doc.runtime.docs_handler;
 
+import 'dart:convert';
+
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
@@ -12,26 +14,46 @@ import 'spec.dart';
 /// Routes mounted (paths relative to wherever the handler is mounted):
 ///
 /// * `GET /openapi.json` - the rendered OpenAPI 3.1 document.
-/// * `GET /docs`         - Swagger UI page.
-/// * `GET /docs/`        - same as `/docs` (with trailing slash).
-/// * `GET /redoc`        - Redocly page.
-/// * `GET /redoc/`       - same as `/redoc` (with trailing slash).
+/// * `GET /docs`         - Swagger UI page (`/docs/` redirects here).
+/// * `GET /redoc`        - Redocly page (`/redoc/` redirects here).
 ///
-/// The [specPath] passed to the UI pages defaults to `'./openapi.json'`
-/// so the UI works whether the docs router is mounted at `/` or under
-/// any prefix.
+/// Links between the pages and to the spec are built from the mount point
+/// (`Request.handlerPath`), so they work at `/` and under any prefix.
+/// [specPath] overrides the spec URL the UIs load: an absolute path or URL
+/// is used as is, a relative one is resolved against the mount point.
+///
+/// The UIs load Swagger UI and Redoc from unpkg at pinned versions with
+/// Subresource Integrity, so a changed or compromised CDN file is refused
+/// by the browser. Set [enabled] to `false` (for example in production) to
+/// answer every route with `404`.
 ///
 /// [title] sets the browser `<title>` used by both UIs. Pass
 /// [swaggerTitle] or [redocTitle] to override it for a specific UI.
 Handler docsHandler(
   OpenApiSpec spec, {
-  String specPath = './openapi.json',
+  String? specPath,
   String title = 'API Docs',
   String? swaggerTitle,
   String? redocTitle,
+  bool enabled = true,
 }) {
+  if (!enabled) return (Request request) => Response.notFound('Not Found');
   final swTitle = swaggerTitle ?? title;
   final rdTitle = redocTitle ?? title;
+
+  String specUrl(Request request) {
+    final base = request.handlerPath;
+    final p = specPath;
+    if (p == null) return '${base}openapi.json';
+    if (p.startsWith('/') || Uri.tryParse(p)?.hasScheme == true) return p;
+    return '$base${p.startsWith('./') ? p.substring(2) : p}';
+  }
+
+  Response html(String body) =>
+      Response.ok(body, headers: {'content-type': 'text/html; charset=utf-8'});
+
+  Response redirectWithoutSlash(Request request, String page) =>
+      Response.movedPermanently('${request.handlerPath}$page');
 
   final router = Router()
     ..get('/openapi.json', (Request request) {
@@ -44,41 +66,61 @@ Handler docsHandler(
       );
     })
     ..get('/docs', (Request request) {
-      return Response.ok(
-        _swaggerHtml(specPath: specPath, title: swTitle),
-        headers: {'content-type': 'text/html; charset=utf-8'},
-      );
+      return html(_swaggerHtml(
+          specUrl: specUrl(request),
+          otherUrl: '${request.handlerPath}redoc',
+          title: swTitle));
     })
-    ..get('/docs/', (Request request) {
-      return Response.ok(
-        _swaggerHtml(specPath: specPath, title: swTitle),
-        headers: {'content-type': 'text/html; charset=utf-8'},
-      );
-    })
+    ..get('/docs/', (Request r) => redirectWithoutSlash(r, 'docs'))
     ..get('/redoc', (Request request) {
-      return Response.ok(
-        _redocHtml(specPath: specPath, title: rdTitle),
-        headers: {'content-type': 'text/html; charset=utf-8'},
-      );
+      return html(_redocHtml(
+          specUrl: specUrl(request),
+          otherUrl: '${request.handlerPath}docs',
+          title: rdTitle));
     })
-    ..get('/redoc/', (Request request) {
-      return Response.ok(
-        _redocHtml(specPath: specPath, title: rdTitle),
-        headers: {'content-type': 'text/html; charset=utf-8'},
-      );
-    });
+    ..get('/redoc/', (Request r) => redirectWithoutSlash(r, 'redoc'));
 
   return router.call;
 }
 
-String _swaggerHtml({required String specPath, required String title}) => '''
+// Pinned UI assets. To upgrade, change the version and recompute each hash:
+// curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+const _swaggerBase = 'https://unpkg.com/swagger-ui-dist@5.33.1';
+const _swaggerCssSri =
+    'sha384-Ov4/wv3j2bmct8cDc5X4ngJZohVPzEmc6uDPH8WeljUxO5vtoykvMEfbu9Vh6RaW';
+const _swaggerBundleSri =
+    'sha384-ZPehFMQommnnuaZ4rpxgkgTT2DKFVp4hZC/7pLit+9Lek9T1YGSo23eHFbvNkXkw';
+const _swaggerPresetSri =
+    'sha384-My2aDM4r2Mbm3ybHcubKm9O9U8FEjvF/O5nGvE9YK5dzqOTbWEKa79RPJ1krdMaF';
+const _redocJs = 'https://unpkg.com/redoc@2.5.4/bundles/redoc.standalone.js';
+const _redocSri =
+    'sha384-w447zOpYfw/1Tv/5AK9NfHTlQIqE3RVR6KY62jCyy9zNDgO64cMwGGP1Fj0zJVf5';
+
+/// [s] for HTML text and attribute values.
+String _html(String s) => s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+
+/// [s] as a JavaScript string literal that is also safe inside <script>.
+String _js(String s) => jsonEncode(s).replaceAll('<', r'\u003c');
+
+String _swaggerHtml({
+  required String specUrl,
+  required String otherUrl,
+  required String title,
+}) =>
+    '''
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>$title</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <title>${_html(title)}</title>
+  <link rel="stylesheet" href="$_swaggerBase/swagger-ui.css"
+        integrity="$_swaggerCssSri" crossorigin="anonymous" />
   <style>
     html, body { margin: 0; padding: 0; background: #fafafa; }
     #nav-bar {
@@ -95,16 +137,18 @@ String _swaggerHtml({required String specPath, required String title}) => '''
 </head>
 <body>
   <div id="nav-bar">
-    <span>$title</span>
-    <a href="../redoc">Redoc</a>
+    <span>${_html(title)}</span>
+    <a href="${_html(otherUrl)}">Redoc</a>
   </div>
   <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js" crossorigin></script>
+  <script src="$_swaggerBase/swagger-ui-bundle.js"
+          integrity="$_swaggerBundleSri" crossorigin="anonymous"></script>
+  <script src="$_swaggerBase/swagger-ui-standalone-preset.js"
+          integrity="$_swaggerPresetSri" crossorigin="anonymous"></script>
   <script>
     window.addEventListener('load', function () {
       window.ui = SwaggerUIBundle({
-        url: '$specPath',
+        url: ${_js(specUrl)},
         dom_id: '#swagger-ui',
         deepLinking: true,
         presets: [
@@ -122,13 +166,18 @@ String _swaggerHtml({required String specPath, required String title}) => '''
 </html>
 ''';
 
-String _redocHtml({required String specPath, required String title}) => '''
+String _redocHtml({
+  required String specUrl,
+  required String otherUrl,
+  required String title,
+}) =>
+    '''
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>$title</title>
+  <title>${_html(title)}</title>
   <style>
     html, body { margin: 0; padding: 0; }
     #nav-bar {
@@ -146,14 +195,15 @@ String _redocHtml({required String specPath, required String title}) => '''
 </head>
 <body>
   <div id="nav-bar">
-    <span>$title</span>
-    <a href="../docs">Swagger UI</a>
+    <span>${_html(title)}</span>
+    <a href="${_html(otherUrl)}">Swagger UI</a>
   </div>
   <div id="redoc-container"></div>
-  <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+  <script src="$_redocJs"
+          integrity="$_redocSri" crossorigin="anonymous"></script>
   <script>
     Redoc.init(
-      '$specPath',
+      ${_js(specUrl)},
       {
         scrollYOffset: 41,
         hideDownloadButton: false,
