@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:gisila_doc/gisila_doc.dart';
+import 'package:shelf/shelf.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -170,6 +171,102 @@ void main() {
       expect(json.containsKey('components'), isFalse);
       expect(
           (json['paths'] as Map)['/admin']['get'], isNot(contains('security')));
+    });
+  });
+
+  group('extra components (DOC-07)', () {
+    test('merge into the generated ones instead of replacing them', () {
+      final spec = OpenApiSpec(
+        info: const ApiInfo(title: 't', version: '1'),
+        extra: <String, Object?>{
+          'components': <String, Object?>{
+            'schemas': <String, Object?>{
+              'Extra': <String, Object?>{'type': 'string'},
+              'User': <String, Object?>{'type': 'integer'},
+            },
+            'examples': <String, Object?>{'e': <String, Object?>{}},
+          },
+          'x-top': 1,
+        },
+      )
+        ..putSchema('User', <String, Object?>{'type': 'object'})
+        ..putSchema('Post', <String, Object?>{'type': 'object'});
+      final out = spec.toMap();
+      final components = out['components'] as Map<String, Object?>;
+      final schemas = components['schemas'] as Map<String, Object?>;
+      expect(schemas.keys, containsAll(['User', 'Post', 'Extra']));
+      expect(schemas['User'], {'type': 'integer'}, reason: 'extra wins');
+      expect(components['examples'], isNotNull);
+      expect(out['x-top'], 1);
+    });
+  });
+
+  group('docsHandler (DOC-04, DOC-05)', () {
+    final spec = OpenApiSpec(info: const ApiInfo(title: 't', version: '1'));
+
+    Future<Response> get(Handler h, String mount, String path) async =>
+        await h(Request('GET', Uri.parse('http://localhost$mount$path'),
+            handlerPath: mount));
+
+    test('links are absolute from the mount point', () async {
+      final h = docsHandler(spec);
+      for (final mount in ['/', '/api/v1/']) {
+        final swagger = await (await get(h, mount, 'docs')).readAsString();
+        expect(swagger, contains('url: "${mount}openapi.json"'));
+        expect(swagger, contains('href="${mount}redoc"'));
+        final redoc = await (await get(h, mount, 'redoc')).readAsString();
+        expect(redoc, contains('"${mount}openapi.json"'));
+        expect(redoc, contains('href="${mount}docs"'));
+        expect((await get(h, mount, 'openapi.json')).statusCode, 200);
+      }
+    });
+
+    test('a trailing slash redirects to the page', () async {
+      final res = await get(docsHandler(spec), '/api/', 'docs/');
+      expect(res.statusCode, 301);
+      expect(res.headers['location'], '/api/docs');
+    });
+
+    test('a relative specPath resolves against the mount point', () async {
+      final h = docsHandler(spec, specPath: './spec.json');
+      expect(await (await get(h, '/api/', 'docs')).readAsString(),
+          contains('url: "/api/spec.json"'));
+      final abs = docsHandler(spec, specPath: 'https://x.test/o.json');
+      expect(await (await get(abs, '/', 'docs')).readAsString(),
+          contains('url: "https://x.test/o.json"'));
+    });
+
+    test('UI assets are pinned with integrity hashes', () async {
+      final h = docsHandler(spec);
+      final pages = [
+        await (await get(h, '/', 'docs')).readAsString(),
+        await (await get(h, '/', 'redoc')).readAsString(),
+      ];
+      for (final page in pages) {
+        final tags = RegExp(r'<(script|link)[^>]*(src|href)="https://[^>]*>')
+            .allMatches(page)
+            .map((m) => m[0]!)
+            .toList();
+        expect(tags, isNotEmpty);
+        for (final tag in tags) {
+          expect(tag, contains('integrity="sha384-'), reason: tag);
+          expect(tag, matches(RegExp(r'@\d+\.\d+\.\d+/')), reason: tag);
+        }
+      }
+    });
+
+    test('the title is escaped', () async {
+      final h = docsHandler(spec, title: '</title><script>x()</script>');
+      final page = await (await get(h, '/', 'docs')).readAsString();
+      expect(page, isNot(contains('<script>x()')));
+      expect(page, contains('&lt;/title&gt;'));
+    });
+
+    test('enabled: false answers 404 everywhere', () async {
+      final h = docsHandler(spec, enabled: false);
+      for (final p in ['docs', 'redoc', 'openapi.json']) {
+        expect((await get(h, '/', p)).statusCode, 404, reason: p);
+      }
     });
   });
 }

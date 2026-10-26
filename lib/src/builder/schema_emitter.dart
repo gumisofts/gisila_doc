@@ -56,12 +56,14 @@ class SchemaEmitter {
         return nullable ? '<String, Object?>{}' : '<String, Object?>{}';
     }
 
-    // List<T> --------------------------------------------------------
-    final listInner = listElementType(type);
+    // List<T>, Set<T>, Iterable<T> -----------------------------------
+    final listInner = iterableElementType(type);
     if (listInner != null) {
       final inner = _emit(listInner);
       final typeExpr = nullable ? "<Object?>['array', 'null']" : "'array'";
-      return "<String, Object?>{'type': $typeExpr, 'items': $inner}";
+      final unique =
+          (type as InterfaceType).isDartCoreSet ? ", 'uniqueItems': true" : '';
+      return "<String, Object?>{'type': $typeExpr, 'items': $inner$unique}";
     }
 
     // Map<String, V> -------------------------------------------------
@@ -71,6 +73,20 @@ class SchemaEmitter {
       final typeExpr = nullable ? "<Object?>['object', 'null']" : "'object'";
       return "<String, Object?>{'type': $typeExpr, "
           "'additionalProperties': $inner}";
+    }
+
+    // Enum: sent as its name unless it defines its own toJson().
+    if (type is InterfaceType && type.element is EnumElement) {
+      final element = type.element as EnumElement;
+      if (element.getMethod('toJson') != null) return '<String, Object?>{}';
+      final names = [
+        for (final f in element.fields)
+          if (f.isEnumConstant) dartString(f.name),
+      ];
+      final typeExpr = nullable ? "<Object?>['string', 'null']" : "'string'";
+      final values = [...names, if (nullable) 'null'];
+      return "<String, Object?>{'type': $typeExpr, "
+          "'enum': <Object?>[${values.join(', ')}]}";
     }
 
     // User-defined class --------------------------------------------

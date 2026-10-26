@@ -46,7 +46,9 @@ class OpenApiSpec {
   /// Top-level tag metadata.
   final Map<String, _TagDef> _tags = <String, _TagDef>{};
 
-  /// Arbitrary extra fields merged into the emitted document.
+  /// Arbitrary extra fields merged into the emitted document. Top-level
+  /// keys replace generated ones, except `components`, which is merged
+  /// section by section (an [extra] entry wins on a name clash).
   final Map<String, Object?> extra;
 
   /// Adds/overrides an operation at [path] / [method].
@@ -107,7 +109,29 @@ class OpenApiSpec {
             },
         },
     };
-    if (extra.isNotEmpty) out.addAll(extra);
+    for (final e in extra.entries) {
+      final generated = out[e.key];
+      final added = e.value;
+      // `components` is merged one section (schemas, securitySchemes, …)
+      // at a time, so extra entries add to the generated ones; on a name
+      // clash the entry from [extra] wins.
+      if (e.key == 'components' && generated is Map && added is Map) {
+        out['components'] = <String, Object?>{
+          for (final g in generated.entries) '${g.key}': g.value,
+          for (final a in added.entries)
+            '${a.key}': switch ((generated[a.key], a.value)) {
+              (final Map<Object?, Object?> g, final Map<Object?, Object?> v) =>
+                <String, Object?>{
+                  for (final x in g.entries) '${x.key}': x.value,
+                  for (final x in v.entries) '${x.key}': x.value,
+                },
+              _ => a.value,
+            },
+        };
+      } else {
+        out[e.key] = added;
+      }
+    }
     return out;
   }
 

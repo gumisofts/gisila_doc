@@ -122,6 +122,18 @@ DartType? listElementType(DartType type) {
   return null;
 }
 
+/// The element type of a `List`, `Set` or `Iterable` (all JSON arrays), or
+/// `null`. Only for schemas: parameter binding builds lists, so it uses
+/// [listElementType].
+DartType? iterableElementType(DartType type) {
+  if (type is InterfaceType &&
+      (type.isDartCoreList || type.isDartCoreSet || type.isDartCoreIterable) &&
+      type.typeArguments.isNotEmpty) {
+    return type.typeArguments.first;
+  }
+  return null;
+}
+
 /// Returns the value type V of `Map<String, V>` or `null` if [type] is
 /// not such a map.
 DartType? mapValueType(DartType type) {

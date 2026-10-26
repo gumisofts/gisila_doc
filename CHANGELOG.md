@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Docs UI (breaking defaults): links and the spec URL are absolute from
+  where `docsHandler` is mounted, so `/docs/` and prefixed mounts work
+  (`/docs/` and `/redoc/` now redirect to the page). `specPath` defaults to
+  the mounted `openapi.json`; a relative value resolves against the mount.
+  Swagger UI 5.33.1 and Redoc 2.5.4 load from unpkg at those exact versions
+  with Subresource Integrity (Redoc used `latest` from its own CDN). New
+  `enabled:` flag answers `404` when false. Titles are HTML-escaped.
+- `OpenApiSpec.extra['components']` is merged into the generated
+  components section by section instead of replacing them.
+- Schemas: enums are `{type: string, enum: [names]}` (matching gisila,
+  which now sends an enum's name), unless the enum defines `toJson()`;
+  `Set<T>` and `Iterable<T>` are arrays, a `Set` with `uniqueItems: true`.
+- Generated handlers: only parameter binding is wrapped in the
+  `TypeError`/`FormatException` → `400` catch. An error thrown by the
+  controller method itself used to come back as a `400` echoing its text;
+  it now reaches the app's error handler (a `500`). Routes without
+  parameters have no wrapper. Needs Dart 3 records (the SDK floor already is).
 - OpenAPI: guarded routes now carry auth information. Operations from
   routes with `@RequireAuth`, `@Permissions`, `@AnyPermission` or `@Roles`
   (method or controller, unless `@Public`) get `security` (each of the new

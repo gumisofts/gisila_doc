@@ -486,6 +486,32 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
 
     final cfgExpr = mergeChain.toString();
 
+    // Only argument binding is wrapped: a TypeError/FormatException there
+    // is a bad request, but one thrown by the controller method itself is
+    // a server bug and must reach the error handler as a 500.
+    final bound = <String>[
+      for (final pi in paramInfos)
+        if (pi.source != _Source.request && pi.source != _Source.context)
+          pi.parameter.name,
+    ];
+    final String handlerBody;
+    if (bound.isEmpty) {
+      handlerBody = '$requestAlias$extractBlock$returnStmt';
+    } else {
+      final record =
+          bound.length == 1 ? '(${bound.single},)' : '(${bound.join(', ')})';
+      handlerBody = '''${requestAlias}final $record = await (() async {
+            try {
+              ${extractBlock}return $record;
+            } on TypeError catch (e) {
+              throw BadRequestException('Invalid request payload (\$e)');
+            } on FormatException catch (e) {
+              throw BadRequestException('Invalid request format: \${e.message}');
+            }
+          })();
+          $returnStmt''';
+    }
+
     return '''
     {
       final basePath = '\$prefix$shelfPath';
@@ -495,13 +521,7 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
         app: app,
         config: __cfg,
         handler: (RequestContext ctx) async {
-          try {
-            $requestAlias$extractBlock$returnStmt
-          } on TypeError catch (e) {
-            throw BadRequestException('Invalid request payload (\$e)');
-          } on FormatException catch (e) {
-            throw BadRequestException('Invalid request format: \${e.message}');
-          }
+          $handlerBody
         },
       ));
       spec.putOperation(openApiPath, '${route.method.toLowerCase()}', Operation(
