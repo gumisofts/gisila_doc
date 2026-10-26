@@ -50,6 +50,10 @@ class SampleController {
   @Get('/open')
   @Public()
   User open() => throw UnimplementedError();
+
+  @Get('/search')
+  @Public()
+  User search({int? page}) => throw UnimplementedError();
 }
 ''';
 
@@ -100,8 +104,12 @@ String _schema(String code, String name) {
 }
 
 void main() {
+  late String raw;
   late String code;
-  setUpAll(() async => code = _squash(await _generate()));
+  setUpAll(() async {
+    raw = await _generate();
+    code = _squash(raw);
+  });
 
   group('DOC-01 auth in the spec', () {
     test('a class-level guard marks routes and adds a 401', () {
@@ -129,6 +137,28 @@ void main() {
       final op = _operation(code, '/open');
       expect(op, isNot(contains('requiresAuth')));
       expect(op, isNot(contains("'401'")));
+    });
+  });
+
+  group('FW-09 only argument binding is wrapped', () {
+    String handler(String path) {
+      final at = code.indexOf("'\$prefix/x$path';");
+      expect(at, isNonNegative, reason: path);
+      return code.substring(at, code.indexOf('spec.putOperation(', at));
+    }
+
+    test('the controller call is outside the try', () {
+      final h = handler('/search');
+      final bindingEnds = h.indexOf('})();');
+      // _squash drops the trailing comma, so check the record in [raw].
+      expect(h, contains('final(page)=await(()async{try{'));
+      expect(raw, contains('final (page,) = await'));
+      expect(bindingEnds, isPositive);
+      expect(h.indexOf('this.search(page:page)'), greaterThan(bindingEnds));
+    });
+
+    test('a route without parameters has no try at all', () {
+      expect(handler('/open'), isNot(contains('try{')));
     });
   });
 

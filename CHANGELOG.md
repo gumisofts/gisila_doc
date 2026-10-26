@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Generated handlers: only parameter binding is wrapped in the
+  `TypeError`/`FormatException` → `400` catch. An error thrown by the
+  controller method itself used to come back as a `400` echoing its text;
+  it now reaches the app's error handler (a `500`). Routes without
+  parameters have no wrapper. Needs Dart 3 records (the SDK floor already is).
 - OpenAPI: guarded routes now carry auth information. Operations from
   routes with `@RequireAuth`, `@Permissions`, `@AnyPermission` or `@Roles`
   (method or controller, unless `@Public`) get `security` (each of the new
