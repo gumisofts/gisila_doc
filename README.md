@@ -1,31 +1,49 @@
 # gisila_doc
 
-> Generate **OpenAPI 3.1** specs and **shelf_router** wiring from annotated
-> Dart controllers — with the smallest possible amount of boilerplate.
+> The OpenAPI-aware variant of the [gisila](../gisila) MVC framework.
+> Generate **OpenAPI 3.1** specs **and** the gisila runtime route
+> registration from one annotated Dart controller.
 
 ```dart
 @Controller('/users', ['Users'])
 class UsersController {
   @Get('/{id}', summary: 'Fetch a user')
-  Future<User> getUser(String id) async => repo.find(id);
+  Future<User> getUser(String id, UserService users) => users.find(id);
 
-  @Post('/', summary: 'Create a user')
-  Future<User> createUser(CreateUser body) async => repo.create(body);
+  @Post(
+    '/',
+    summary: 'Create a user',
+    config: RouteConfig(rateLimit: RateLimitConfig(requestsPerMinute: 60)),
+  )
+  Future<User> createUser(CreateUserForm form, UserService users) =>
+      users.create(name: form.name.value!, email: form.email.value!);
 }
 ```
 
 ```dart
 final spec = OpenApiSpec(info: ApiInfo(title: 'Demo', version: '1.0.0'));
+final app = GisilaApp(config: AppConfig(...));
 final router = Router();
 
-UsersController().attachOpenApi(spec, router);
+app.registerService<UserService>(UserService.new);
+UsersController().attachToApp(app, router, spec);
 router.mount('/', docsHandler(spec));   // /openapi.json · /docs · /redoc
 
-await io.serve(router.call, '0.0.0.0', 8080);
+app.registerController(attacher: (app, mainRouter, {String prefix = ''}) {
+  mainRouter.mount('/', router.call);
+});
+await app.start(host: '0.0.0.0', port: 8080);
 ```
 
-Path parameters, request body schema, response schema, status codes, and
-Swagger UI are all derived automatically.
+Path parameters, typed form schemas, response schemas, status codes,
+per-route rate limit / timeout / permission middleware, **and** Swagger
+UI are all derived automatically. Routes run through the same MVC
+pipeline as gisila core (error mapping, DB session, AuthN/AuthZ, …).
+
+> **Migrating from 0.1.x?** The generated extension was renamed from
+> `attachOpenApi(spec, router)` to
+> `attachToApp(app, router, spec, {prefix})`, and gisila_doc now
+> re-exports the gisila runtime. See [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -95,7 +113,10 @@ dart run build_runner watch
 ```
 
 This creates `users_controller.g.dart` with an extension method
-`attachOpenApi(OpenApiSpec spec, Router router, {String prefix = ''})`.
+`attachToApp(GisilaApp app, Router router, OpenApiSpec spec,
+{String prefix = ''})` that registers the routes via
+`gisilaRoute(...)` and contributes the matching operations / schemas
+/ tags to the spec.
 
 ---
 
@@ -232,7 +253,41 @@ walked through its default constructor and emitted under
 | `List<T>` | `{type: array, items: <T>}` |
 | `Map<String, V>` | `{type: object, additionalProperties: <V>}` |
 | Custom class | `{$ref: '#/components/schemas/MyClass'}` |
+| Generic class `Page<User>` | `{$ref: '#/components/schemas/Page_User'}`, with `T` replaced by `User` |
 | `T?` | Union with `'null'` (OpenAPI 3.1 style) |
+
+Each instantiation of a generic class is its own component, named after
+its type arguments: `Page<User>` is `Page_User`, `Page<List<Post?>>` is
+`Page_List_PostNullable`.
+
+## Authentication in the spec
+
+Routes guarded with gisila's `@RequireAuth()`, `@Permissions`,
+`@AnyPermission` or `@Roles` (on the method or the controller, unless the
+method is `@Public()`) are documented as such:
+
+- `security` lists every scheme in `OpenApiSpec.securitySchemes` as an
+  alternative, with the route's roles and permissions as its values
+  (OpenAPI 3.1 allows role names for non-OAuth schemes).
+- a `401` response, and a `403` when permissions or roles apply, both with
+  gisila's error body (`errorEnvelopeSchema`). A response the route
+  declares itself with `@ApiResponse` takes precedence.
+- `x-gisila-guards` with the raw `permissions`, `anyPermission` and
+  `roles`, since "any of" has no standard OpenAPI form.
+
+`securitySchemes` defaults to one HTTP bearer scheme, `bearerAuth`, which
+is what gisila's authenticators read. It is emitted only when some route
+is guarded. Pass your own, or `{}` to leave security out:
+
+```dart
+final spec = OpenApiSpec(
+  info: ApiInfo(title: 'My API', version: '1.0.0'),
+  securitySchemes: {
+    'bearerAuth': SecurityScheme.bearer(),
+    'session': SecurityScheme.apiKey(name: 'sid', location: 'cookie'),
+  },
+);
+```
 
 ---
 

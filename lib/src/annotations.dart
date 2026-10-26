@@ -6,7 +6,10 @@
 /// parameter types and method signatures.
 library gisila_doc.annotations;
 
+import 'package:gisila/gisila.dart' show RouteConfig;
 import 'package:meta/meta_meta.dart';
+
+export 'package:gisila/gisila.dart' show RouteConfig, UseRouteConfig;
 
 /// Marks a class as an OpenAPI controller.
 ///
@@ -64,6 +67,7 @@ class Route {
     this.statusCode = 200,
     this.body,
     this.responses,
+    this.config,
   });
 
   final String method;
@@ -88,6 +92,13 @@ class Route {
   /// Superseded by standalone [Returns] / [Responses] annotations if
   /// those are also present on the same method.
   final List<Returns>? responses;
+
+  /// Per-route configuration overlay. Merged on top of
+  /// `AppConfig.defaultRouteConfig` and any class-level
+  /// `@UseRouteConfig`. Use this to set a per-route rate limit,
+  /// timeout, body size cap, content-type whitelist, CORS overrides,
+  /// extra middleware, or declarative permissions.
+  final RouteConfig? config;
 }
 
 class Get extends Route {
@@ -101,6 +112,7 @@ class Get extends Route {
     int statusCode = 200,
     BodyDoc? body,
     List<Returns>? responses,
+    RouteConfig? config,
   }) : super('GET', path,
             summary: summary,
             description: description,
@@ -109,7 +121,8 @@ class Get extends Route {
             tags: tags,
             statusCode: statusCode,
             body: body,
-            responses: responses);
+            responses: responses,
+            config: config);
 }
 
 class Post extends Route {
@@ -123,6 +136,7 @@ class Post extends Route {
     int statusCode = 201,
     BodyDoc? body,
     List<Returns>? responses,
+    RouteConfig? config,
   }) : super('POST', path,
             summary: summary,
             description: description,
@@ -131,7 +145,8 @@ class Post extends Route {
             tags: tags,
             statusCode: statusCode,
             body: body,
-            responses: responses);
+            responses: responses,
+            config: config);
 }
 
 class Put extends Route {
@@ -145,6 +160,7 @@ class Put extends Route {
     int statusCode = 200,
     BodyDoc? body,
     List<Returns>? responses,
+    RouteConfig? config,
   }) : super('PUT', path,
             summary: summary,
             description: description,
@@ -153,7 +169,8 @@ class Put extends Route {
             tags: tags,
             statusCode: statusCode,
             body: body,
-            responses: responses);
+            responses: responses,
+            config: config);
 }
 
 class Patch extends Route {
@@ -167,6 +184,7 @@ class Patch extends Route {
     int statusCode = 200,
     BodyDoc? body,
     List<Returns>? responses,
+    RouteConfig? config,
   }) : super('PATCH', path,
             summary: summary,
             description: description,
@@ -175,7 +193,8 @@ class Patch extends Route {
             tags: tags,
             statusCode: statusCode,
             body: body,
-            responses: responses);
+            responses: responses,
+            config: config);
 }
 
 class Delete extends Route {
@@ -189,6 +208,7 @@ class Delete extends Route {
     int statusCode = 204,
     BodyDoc? body,
     List<Returns>? responses,
+    RouteConfig? config,
   }) : super('DELETE', path,
             summary: summary,
             description: description,
@@ -197,7 +217,8 @@ class Delete extends Route {
             tags: tags,
             statusCode: statusCode,
             body: body,
-            responses: responses);
+            responses: responses,
+            config: config);
 }
 
 class Head extends Route {
@@ -209,13 +230,15 @@ class Head extends Route {
     bool deprecated = false,
     List<String> tags = const <String>[],
     List<Returns>? responses,
+    RouteConfig? config,
   }) : super('HEAD', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
             tags: tags,
-            responses: responses);
+            responses: responses,
+            config: config);
 }
 
 class Options extends Route {
@@ -227,13 +250,15 @@ class Options extends Route {
     bool deprecated = false,
     List<String> tags = const <String>[],
     List<Returns>? responses,
+    RouteConfig? config,
   }) : super('OPTIONS', path,
             summary: summary,
             description: description,
             operationId: operationId,
             deprecated: deprecated,
             tags: tags,
-            responses: responses);
+            responses: responses,
+            config: config);
 }
 
 // ---------------------------------------------------------------------------

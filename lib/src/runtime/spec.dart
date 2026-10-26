@@ -16,12 +16,23 @@ class OpenApiSpec {
     required this.info,
     this.servers = const <ApiServer>[],
     this.openapi = '3.1.0',
+    Map<String, SecurityScheme>? securitySchemes,
     Map<String, Object?>? extra,
-  }) : extra = extra ?? <String, Object?>{};
+  })  : securitySchemes =
+            securitySchemes ?? const {'bearerAuth': SecurityScheme.bearer()},
+        extra = extra ?? <String, Object?>{};
 
   final String openapi;
   final ApiInfo info;
   final List<ApiServer> servers;
+
+  /// How guarded operations authenticate, emitted under
+  /// `components.securitySchemes`. Every operation with
+  /// [Operation.requiresAuth] lists each scheme as an alternative. Defaults
+  /// to a single HTTP bearer scheme (`Authorization: Bearer <token>`), which
+  /// is what gisila's authenticators read; pass `{}` to leave security out
+  /// of the document.
+  final Map<String, SecurityScheme> securitySchemes;
 
   /// Path → method → operation. Insertion order is preserved so the
   /// emitted document is stable across runs.
@@ -69,6 +80,10 @@ class OpenApiSpec {
 
   /// Serializes the document to a plain map.
   Map<String, Object?> toMap() {
+    final guarded = paths.values
+        .any((byMethod) => byMethod.values.any((op) => op.requiresAuth));
+    final schemes =
+        guarded ? securitySchemes : const <String, SecurityScheme>{};
     final out = <String, Object?>{
       'openapi': openapi,
       'info': info.toMap(),
@@ -79,12 +94,17 @@ class OpenApiSpec {
       'paths': <String, Object?>{
         for (final entry in paths.entries)
           entry.key: <String, Object?>{
-            for (final op in entry.value.entries) op.key: op.value.toMap(),
+            for (final op in entry.value.entries)
+              op.key: op.value.toMap(securitySchemes: schemes.keys),
           },
       },
-      if (_schemas.isNotEmpty)
+      if (_schemas.isNotEmpty || schemes.isNotEmpty)
         'components': <String, Object?>{
-          'schemas': _schemas,
+          if (_schemas.isNotEmpty) 'schemas': _schemas,
+          if (schemes.isNotEmpty)
+            'securitySchemes': <String, Object?>{
+              for (final e in schemes.entries) e.key: e.value.toMap(),
+            },
         },
     };
     if (extra.isNotEmpty) out.addAll(extra);
@@ -158,6 +178,74 @@ class ApiServer {
       };
 }
 
+/// An entry in `components.securitySchemes`.
+class SecurityScheme {
+  const SecurityScheme({
+    required this.type,
+    this.scheme,
+    this.bearerFormat,
+    this.name,
+    this.location,
+    this.description,
+  });
+
+  /// `Authorization: Bearer <token>`.
+  const SecurityScheme.bearer(
+      {String this.bearerFormat = 'JWT', this.description})
+      : type = 'http',
+        scheme = 'bearer',
+        name = null,
+        location = null;
+
+  /// A key in a header, query parameter or cookie named [name].
+  const SecurityScheme.apiKey({
+    required String this.name,
+    String this.location = 'header',
+    this.description,
+  })  : type = 'apiKey',
+        scheme = null,
+        bearerFormat = null;
+
+  /// `http`, `apiKey`, `oauth2`, `openIdConnect` or `mutualTLS`.
+  final String type;
+
+  /// For `http`: `bearer`, `basic`, ...
+  final String? scheme;
+  final String? bearerFormat;
+
+  /// For `apiKey`: the header, query or cookie name and where it goes.
+  final String? name;
+  final String? location;
+  final String? description;
+
+  Map<String, Object?> toMap() => <String, Object?>{
+        'type': type,
+        if (scheme != null) 'scheme': scheme,
+        if (bearerFormat != null) 'bearerFormat': bearerFormat,
+        if (name != null) 'name': name,
+        if (location != null) 'in': location,
+        if (description != null) 'description': description,
+      };
+}
+
+/// The JSON body gisila sends with every error response.
+const Map<String, Object?> errorEnvelopeSchema = <String, Object?>{
+  'type': 'object',
+  'properties': <String, Object?>{
+    'error': <String, Object?>{
+      'type': 'object',
+      'properties': <String, Object?>{
+        'status': <String, Object?>{'type': 'integer'},
+        'message': <String, Object?>{'type': 'string'},
+        'code': <String, Object?>{'type': 'string'},
+        'details': <String, Object?>{'type': 'object'},
+      },
+      'required': <String>['status', 'message'],
+    },
+  },
+  'required': <String>['error'],
+};
+
 /// A single HTTP operation. The generator constructs these inline.
 class Operation {
   Operation({
@@ -169,6 +257,10 @@ class Operation {
     this.parameters = const <Parameter>[],
     this.requestBody,
     this.responses = const <String, ResponseSpec>{},
+    this.requiresAuth = false,
+    this.permissions = const <String>[],
+    this.anyPermission = const <String>[],
+    this.roles = const <String>[],
   });
 
   final String? summary;
@@ -180,7 +272,27 @@ class Operation {
   final RequestBody? requestBody;
   final Map<String, ResponseSpec> responses;
 
-  Map<String, Object?> toMap() => <String, Object?>{
+  /// Whether the route's guards require an authenticated caller.
+  final bool requiresAuth;
+
+  /// Permissions the caller must all hold.
+  final List<String> permissions;
+
+  /// Permissions of which the caller must hold at least one.
+  final List<String> anyPermission;
+
+  /// Roles the caller must all hold.
+  final List<String> roles;
+
+  /// [securitySchemes] are the document's scheme names. A guarded operation
+  /// lists each as an alternative, carrying its required roles and
+  /// permissions (OpenAPI 3.1 allows role names for non-OAuth schemes).
+  /// The guards also appear as `x-gisila-guards`, since `anyPermission`
+  /// has no standard form.
+  Map<String, Object?> toMap({
+    Iterable<String> securitySchemes = const <String>[],
+  }) =>
+      <String, Object?>{
         if (tags.isNotEmpty) 'tags': tags,
         if (summary != null) 'summary': summary,
         if (description != null) 'description': description,
@@ -194,6 +306,22 @@ class Operation {
           for (final entry in responses.entries)
             entry.key.toString(): entry.value.toMap(),
         },
+        if (requiresAuth && securitySchemes.isNotEmpty)
+          'security': <Object?>[
+            for (final name in securitySchemes)
+              <String, Object?>{
+                name: <String>[...roles, ...permissions],
+              },
+          ],
+        if (requiresAuth &&
+            (permissions.isNotEmpty ||
+                anyPermission.isNotEmpty ||
+                roles.isNotEmpty))
+          'x-gisila-guards': <String, Object?>{
+            if (permissions.isNotEmpty) 'permissions': permissions,
+            if (anyPermission.isNotEmpty) 'anyPermission': anyPermission,
+            if (roles.isNotEmpty) 'roles': roles,
+          },
       };
 }
 

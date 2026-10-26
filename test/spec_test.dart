@@ -69,7 +69,8 @@ void main() {
   group('coerce', () {
     test('returns null when not required and value is missing', () {
       expect(coerce<int?>(null, 'x', required: false), isNull);
-      expect(coerce<String?>('', 'x', required: false), isNull);
+      // An empty value is still a value: `?x=` is not the same as no `x`.
+      expect(coerce<String?>('', 'x', required: false), '');
     });
 
     test('throws BadRequestException when required value is missing', () {
@@ -93,6 +94,82 @@ void main() {
           throwsA(isA<BadRequestException>()));
       expect(() => coerce<bool>('maybe', 'x', required: true),
           throwsA(isA<BadRequestException>()));
+    });
+  });
+
+  group('security (DOC-01)', () {
+    Map<String, dynamic> build(OpenApiSpec spec) {
+      spec.putOperation('/open', 'get',
+          Operation(responses: const {'200': ResponseSpec(description: 'ok')}));
+      spec.putOperation(
+          '/admin',
+          'get',
+          Operation(
+            responses: const {'200': ResponseSpec(description: 'ok')},
+            requiresAuth: true,
+            roles: const ['admin'],
+            permissions: const ['users.read'],
+            anyPermission: const ['a', 'b'],
+          ));
+      return jsonDecode(spec.toJson()) as Map<String, dynamic>;
+    }
+
+    test('guarded operations reference the default bearer scheme', () {
+      final json =
+          build(OpenApiSpec(info: const ApiInfo(title: 'T', version: '1')));
+      final schemes = (json['components'] as Map)['securitySchemes'] as Map;
+      expect(schemes, {
+        'bearerAuth': {
+          'type': 'http',
+          'scheme': 'bearer',
+          'bearerFormat': 'JWT'
+        },
+      });
+      final admin = (json['paths'] as Map)['/admin']['get'] as Map;
+      expect(admin['security'], [
+        {
+          'bearerAuth': ['admin', 'users.read']
+        },
+      ]);
+      expect(admin['x-gisila-guards'], {
+        'permissions': ['users.read'],
+        'anyPermission': ['a', 'b'],
+        'roles': ['admin'],
+      });
+      final open = (json['paths'] as Map)['/open']['get'] as Map;
+      expect(open.containsKey('security'), isFalse);
+    });
+
+    test('each configured scheme is an alternative', () {
+      final json = build(OpenApiSpec(
+        info: const ApiInfo(title: 'T', version: '1'),
+        securitySchemes: const {
+          'bearerAuth': SecurityScheme.bearer(),
+          'cookie': SecurityScheme.apiKey(name: 'sid', location: 'cookie'),
+        },
+      ));
+      final admin = (json['paths'] as Map)['/admin']['get'] as Map;
+      expect((admin['security'] as List).map((e) => (e as Map).keys.single),
+          ['bearerAuth', 'cookie']);
+      expect(((json['components'] as Map)['securitySchemes'] as Map)['cookie'],
+          {'type': 'apiKey', 'name': 'sid', 'in': 'cookie'});
+    });
+
+    test('no guarded operations, or securitySchemes: {}, means no security',
+        () {
+      final plain = OpenApiSpec(info: const ApiInfo(title: 'T', version: '1'))
+        ..putOperation(
+            '/a',
+            'get',
+            Operation(
+                responses: const {'200': ResponseSpec(description: 'ok')}));
+      expect(jsonDecode(plain.toJson()), isNot(contains('components')));
+
+      final json = build(OpenApiSpec(
+          info: const ApiInfo(title: 'T', version: '1'), securitySchemes: {}));
+      expect(json.containsKey('components'), isFalse);
+      expect(
+          (json['paths'] as Map)['/admin']['get'], isNot(contains('security')));
     });
   });
 }

@@ -43,6 +43,41 @@ bool isShelfRequest(DartType type) {
       element.library.identifier.startsWith('package:shelf/');
 }
 
+bool _isGisilaSubtype(DartType type, String className) {
+  final element = type.element;
+  if (element is! ClassElement) return false;
+  ClassElement? cursor = element;
+  while (cursor != null) {
+    if (cursor.name == className &&
+        cursor.library.identifier.startsWith('package:gisila/')) {
+      return true;
+    }
+    final superType = cursor.supertype;
+    if (superType == null) break;
+    final superElement = superType.element;
+    cursor = superElement is ClassElement ? superElement : null;
+  }
+  return false;
+}
+
+/// True iff [type] extends gisila's `Form`.
+bool isFormSubtype(DartType type) => _isGisilaSubtype(type, 'Form');
+
+/// True iff [type] extends gisila's `Service`.
+bool isServiceSubtype(DartType type) => _isGisilaSubtype(type, 'Service');
+
+/// True iff [type] is (a subclass of) gisila's `FormField<T>`. Used by
+/// the schema emitter when introspecting form classes.
+bool isFormFieldSubtype(DartType type) => _isGisilaSubtype(type, 'FormField');
+
+/// True iff [type] is `RequestContext` from `package:gisila`.
+bool isRequestContext(DartType type) {
+  final element = type.element;
+  if (element is! ClassElement) return false;
+  return element.name == 'RequestContext' &&
+      element.library.identifier.startsWith('package:gisila/');
+}
+
 /// True iff [type] is `shelf.Response` from `package:shelf/shelf.dart`.
 bool isShelfResponse(DartType type) {
   final element = type.element;
@@ -123,6 +158,18 @@ ConstructorElement? defaultConstructor(ClassElement cls) {
   }
   // Some classes only expose a factory as their default.
   for (final c in cls.constructors) {
+    if (c.name.isEmpty) return c;
+  }
+  return null;
+}
+
+/// Like [defaultConstructor], but taken from the instantiated [type], so
+/// parameter types have the type arguments substituted (`T` → `User`).
+ConstructorElement? defaultConstructorOf(InterfaceType type) {
+  for (final c in type.constructors) {
+    if (c.name.isEmpty && !c.isFactory) return c;
+  }
+  for (final c in type.constructors) {
     if (c.name.isEmpty) return c;
   }
   return null;
