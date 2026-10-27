@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Docs: README and library examples use `attachToApp(app, router, spec)`
+  and mount `docsHandler` at `/`; the type table lists `num`, enums and
+  `Set` as emitted.
+- Security: guard and config annotations are only recognised from
+  `package:gisila` / `package:gisila_doc`, not from any library whose URI
+  contains "gisila" (a look-alike `Public` made routes public).
+- `@Get('/')` under a controller prefix answers with and without the
+  trailing slash.
+- Routes that bind input (a form, a body, path/query/header parameters)
+  document a `400` with the error envelope, unless they declare their own.
+- A `Form` request body is documented as JSON or
+  `application/x-www-form-urlencoded`, and as `multipart/form-data` only
+  when the form has a `FileField`.
 - Docs UI (breaking defaults): links and the spec URL are absolute from
   where `docsHandler` is mounted, so `/docs/` and prefixed mounts work
   (`/docs/` and `/redoc/` now redirect to the page). `specPath` defaults to
