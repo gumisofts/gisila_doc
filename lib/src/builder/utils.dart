@@ -60,6 +60,14 @@ bool _isGisilaSubtype(DartType type, String className) {
   return false;
 }
 
+/// True for a library of package:gisila or package:gisila_doc. Annotations
+/// are matched by where they are declared, not by name: a `Public` or
+/// `Roles` class from any other package (even one named like
+/// `gisila_extras`) is not ours.
+bool isGisilaLibrary(LibraryElement library) =>
+    library.identifier.startsWith('package:gisila/') ||
+    library.identifier.startsWith('package:gisila_doc/');
+
 /// True iff [type] extends gisila's `Form`.
 bool isFormSubtype(DartType type) => _isGisilaSubtype(type, 'Form');
 
@@ -69,6 +77,10 @@ bool isServiceSubtype(DartType type) => _isGisilaSubtype(type, 'Service');
 /// True iff [type] is (a subclass of) gisila's `FormField<T>`. Used by
 /// the schema emitter when introspecting form classes.
 bool isFormFieldSubtype(DartType type) => _isGisilaSubtype(type, 'FormField');
+
+/// True iff [type] is (a subclass of) gisila's `FileField`, which only
+/// binds from a `multipart/form-data` body.
+bool isFileFieldSubtype(DartType type) => _isGisilaSubtype(type, 'FileField');
 
 /// True iff [type] is `RequestContext` from `package:gisila`.
 bool isRequestContext(DartType type) {

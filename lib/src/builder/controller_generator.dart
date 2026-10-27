@@ -192,12 +192,16 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
             'await bindForm(request, $typeName.new);',
           );
           _appendArgWith(argExprs, namedArgExprs, pi, pi.parameter.name);
-          // Contribute the form's JSON Schema to the OpenAPI body.
+          // Contribute the form's JSON Schema to the OpenAPI body. bindForm
+          // takes JSON or a form post; a file field needs multipart.
           final schema = emitter.emitInline(pi.parameter.type);
+          final contentTypes = emitter.formHasFiles(pi.parameter.type)
+              ? const ['multipart/form-data']
+              : const ['application/json', 'application/x-www-form-urlencoded'];
           requestBodyEntry =
               'RequestBody(required: ${!pi.parameter.isOptional && !isNullable(pi.parameter.type)}, '
               'content: {'
-              "'application/json': MediaType(schema: $schema)"
+              '${contentTypes.map((t) => "'$t': MediaType(schema: $schema)").join(', ')}'
               '})';
           break;
 
@@ -406,13 +410,30 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       }
     }
 
+    final declared = {
+      route.successStatus,
+      for (final extra in route.extraResponses) extra.statusCode,
+    };
+
+    // Anything bound from the request (a form, a body, path/query/header
+    // parameters) can be rejected with a 400 in the error envelope.
+    final bindsInput = paramInfos.any((p) => !const {
+          _Source.request,
+          _Source.context,
+          _Source.service,
+        }.contains(p.source));
+    if (bindsInput && !declared.contains(400)) {
+      responsesEntries.add(
+        "'400': ResponseSpec(description: "
+        '${_dartStr(_defaultStatusDescription(400))}, content: {'
+        "'application/json': MediaType(schema: errorEnvelopeSchema)"
+        '})',
+      );
+    }
+
     // Guarded routes document the 401 (and, with permissions or roles, the
     // 403) that the guards send, unless the route declares its own.
     if (effectiveGuards.requireAuth) {
-      final declared = {
-        route.successStatus,
-        for (final extra in route.extraResponses) extra.statusCode,
-      };
       final authz = effectiveGuards.permissions.isNotEmpty ||
           effectiveGuards.anyPermission.isNotEmpty ||
           effectiveGuards.roles.isNotEmpty;
@@ -512,18 +533,28 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
           $returnStmt''';
     }
 
+    final verb = route.method.toLowerCase();
+    // `@Get('/')` under `/users` is `/users/`; serve `/users` too, which is
+    // what clients call (shelf_router matches the slash exactly).
+    final alias = shelfPath.endsWith('/')
+        ? '''
+      if (basePath.length > 1) {
+        router.$verb(basePath.substring(0, basePath.length - 1), __route);
+      }'''
+        : '';
     return '''
     {
       final basePath = '\$prefix$shelfPath';
       final openApiPath = '\$prefix$fullPath';
       final RouteConfig __cfg = $cfgExpr;
-      router.${route.method.toLowerCase()}(basePath, gisilaRoute(
+      final __route = gisilaRoute(
         app: app,
         config: __cfg,
         handler: (RequestContext ctx) async {
           $handlerBody
         },
-      ));
+      );
+      router.$verb(basePath, __route);$alias
       spec.putOperation(openApiPath, '${route.method.toLowerCase()}', Operation(
         ${operationFields.join(',\n        ')},
       ));
@@ -720,7 +751,7 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       final element = type?.element;
       if (element is! ClassElement) continue;
       if (element.name != 'UseRouteConfig') continue;
-      if (!element.library.identifier.contains('gisila')) continue;
+      if (!isGisilaLibrary(element.library)) continue;
       final cfg = value.getField('config');
       if (cfg != null && !cfg.isNull) return cfg;
     }
@@ -740,7 +771,7 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       final type = value.type;
       final element = type?.element;
       if (element is! ClassElement) continue;
-      if (!element.library.identifier.contains('gisila')) continue;
+      if (!isGisilaLibrary(element.library)) continue;
 
       switch (element.name) {
         case 'RequireAuth':
@@ -796,7 +827,7 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       final element = type?.element;
       if (element is! ClassElement) continue;
       if (element.name != 'UseMiddleware') continue;
-      if (!element.library.identifier.contains('gisila')) continue;
+      if (!isGisilaLibrary(element.library)) continue;
       final name = value.getField('name')?.toStringValue();
       if (name != null && name.isNotEmpty) names.add(name);
     }

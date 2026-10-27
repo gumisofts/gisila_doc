@@ -169,6 +169,15 @@ class SchemaEmitter {
         '}';
   }
 
+  /// Whether the `Form` subclass [type] has a file field, so it can only be
+  /// sent as `multipart/form-data`.
+  bool formHasFiles(DartType type) {
+    final element = type.element;
+    if (element is! ClassElement) return false;
+    return _allInstanceFields(element).any(
+        (f) => !f.isStatic && !f.isSynthetic && isFileFieldSubtype(f.type));
+  }
+
   /// Walks the class hierarchy and yields every instance field, with
   /// most-derived first. Used by the Form schema emitter so subclass
   /// fields don't shadow base-class ones in the spec.
