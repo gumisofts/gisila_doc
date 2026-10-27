@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Docs: README and library examples use `attachToApp(app, router, spec)`
+  and mount `docsHandler` at `/`; the type table lists `num`, enums and
+  `Set` as emitted.
 - Security: guard and config annotations are only recognised from
   `package:gisila` / `package:gisila_doc`, not from any library whose URI
   contains "gisila" (a look-alike `Public` made routes public).

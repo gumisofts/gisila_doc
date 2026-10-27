@@ -16,17 +16,19 @@
 ///     info: ApiInfo(title: 'Demo API', version: '1.0.0'),
 ///   );
 ///
-///   final router = Router();
-///   UsersController().attachOpenApi(spec, router);
-///   router.mount('/', docsHandler(spec));
-///
-///   await io.serve(router.call, '0.0.0.0', 8080);
+///   final app = GisilaApp(config: AppConfig());
+///   app.registerController(attacher: (app, router, {prefix = ''}) {
+///     UsersController().attachToApp(app, router, spec, prefix: prefix);
+///     router.mount('/', docsHandler(spec)); // /docs, /redoc, /openapi.json
+///   });
+///   await app.start(port: 8080);
 /// }
 /// ```
 ///
-/// Each `@Controller` class generates an `attachOpenApi(spec, router)`
-/// extension method via build_runner; run `dart run build_runner build`
-/// to refresh after changing annotations.
+/// Each `@Controller` class generates an
+/// `attachToApp(app, router, spec, {prefix})` extension method via
+/// build_runner; run `dart run build_runner build` to refresh after
+/// changing annotations.
 library gisila_doc;
 
 // Re-export the gisila runtime so a single

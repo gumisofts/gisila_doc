@@ -139,14 +139,16 @@ Future<void> main() async {
     servers: [ApiServer(url: 'http://localhost:8080')],
   );
 
-  final router = Router();
-  UsersController().attachOpenApi(spec, router);
+  final app = GisilaApp(config: AppConfig());
+  app.registerController(attacher: (app, router, {prefix = ''}) {
+    UsersController().attachToApp(app, router, spec, prefix: prefix);
+    // Serves /docs (Swagger UI), /redoc and /openapi.json. Mounted after
+    // the controllers, so their routes take precedence.
+    router.mount('/', docsHandler(spec));
+  });
 
-  // Serves /openapi.json, /docs (Swagger UI), /redoc
-  router.mount('/', docsHandler(spec));
-
-  final server = await io.serve(router.call, '0.0.0.0', 8080);
-  print('Listening on http://localhost:${server.port}/docs');
+  await app.start(port: 8080);
+  print('Docs at http://localhost:8080/docs');
 }
 ```
 
@@ -246,11 +248,14 @@ walked through its default constructor and emitted under
 | ---- | -------------- |
 | `String` | `{type: string}` |
 | `int` | `{type: integer, format: int64}` |
-| `double` / `num` | `{type: number, format: double}` |
+| `double` | `{type: number, format: double}` |
+| `num` | `{type: number}` |
 | `bool` | `{type: boolean}` |
 | `DateTime` | `{type: string, format: date-time}` |
 | `Uri` | `{type: string, format: uri}` |
-| `List<T>` | `{type: array, items: <T>}` |
+| `List<T>` / `Iterable<T>` | `{type: array, items: <T>}` |
+| `Set<T>` | `{type: array, items: <T>, uniqueItems: true}` |
+| `enum Color { red, green }` | `{type: string, enum: [red, green]}` (an enum with its own `toJson()` is left open) |
 | `Map<String, V>` | `{type: object, additionalProperties: <V>}` |
 | Custom class | `{$ref: '#/components/schemas/MyClass'}` |
 | Generic class `Page<User>` | `{$ref: '#/components/schemas/Page_User'}`, with `T` replaced by `User` |
