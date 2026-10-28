@@ -322,6 +322,15 @@ void main() {
     });
   });
 
+  group('PNL-20 shared rate limits', () {
+    test('each route passes METHOD path as its routeId', () {
+      expect(code, contains("routeId:'GET\$basePath'"));
+      expect(code, contains("routeId:'PUT\$basePath'"));
+      expect("routeId:".allMatches(code).length,
+          "__route=gisilaRoute(".allMatches(code).length);
+    });
+  });
+
   test('a look-alike annotation from another package is ignored (FW-15)',
       () async {
     final rw = TestReaderWriter(rootPackage: 'my_app');

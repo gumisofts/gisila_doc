@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-28 (BREAKING)
+
+- Requires gisila ^0.3.0.
+- Generated routes pass `gisilaRoute(routeId: 'METHOD path')`, as gisila's
+  own generator does, so a shared `AppConfig.rateLimitStore` gives each
+  route one budget across isolates and processes. Regenerate after
+  upgrading.
 
 - Docs: README and library examples use `attachToApp(app, router, spec)`
   and mount `docsHandler` at `/`; the type table lists `num`, enums and
