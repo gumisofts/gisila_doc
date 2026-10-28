@@ -550,6 +550,7 @@ class ControllerGenerator extends GeneratorForAnnotation<Controller> {
       final __route = gisilaRoute(
         app: app,
         config: __cfg,
+        routeId: '${route.method.toUpperCase()} \$basePath',
         handler: (RequestContext ctx) async {
           $handlerBody
         },
