@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 — 2026-10-30
+
+- Works with gisila 0.4.0 too (`gisila: ">=0.3.0 <0.5.0"`).
+
 ## 0.3.0 — 2026-10-28 (BREAKING)
 
 - Requires gisila ^0.3.0.
